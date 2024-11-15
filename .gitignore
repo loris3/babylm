@@ -1,0 +1,8 @@
+.venv
+curricula/*
+train_10M
+train_100M
+__pycache__
+temp.ipynb
+models/*
+wandb/*

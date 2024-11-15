@@ -1,43 +1,56 @@
 from pathlib import Path
 import os
+from huggingface_hub import hf_hub_download
+def get_curriculum(repo_id , filename):
+    return torch.load(hf_hub_download(repo_id=repo_id, filename=filename, repo_type="dataset"),weights_only=True)
+
+
+
 def get_epoch_checkpoints(model_dir):
-    return sorted([int(str(x).split("-")[-1]) for x in Path(model_dir).glob("checkpoint-*")])
+    checkpoint_ids = sorted([int(str(x).split("-")[-1]) for x in Path(model_dir).glob("checkpoint-*")])
+
+    return [os.path.join(model_dir,"checkpoint-{}".format(c)) for c in checkpoint_ids]
     # epoch_checkpoints = c[5::6]
     # if c[-1] not in epoch_checkpoints:
     #     epoch_checkpoints.pop()
     #     epoch_checkpoints.append(c[-1])
     return epoch_checkpoints
 
-def get_all_chunks(checkpoint_path,gradient_input_dir, gradients_per_file):
-    return [ os.path.join(gradient_input_dir, checkpoint_path.split("-")[-1] + "_" + str(i) + "_" + str(i + gradients_per_file)) for i in range(0, len(dataset["train"]), args.gradients_per_file)]
-
+# def get_all_chunks(checkpoint_path,gradient_input_dir, gradients_per_file):
+#     return [ os.path.join(gradient_input_dir, checkpoint_path.split("-")[-1] + "_" + str(i) + "_" + str(i + gradients_per_file)) for i in range(0, len(dataset["train"]), args.gradients_per_file)]
+def get_epoch(checkpoint_path):
+    checkpoint_ids = sorted([int(str(x).split("-")[-1]) for x in Path(os.path.dirname(checkpoint_path)).glob("checkpoint-*")])
+    return checkpoint_ids.index(int(str(checkpoint_path).split("-")[-1]))
 
 
 import xxhash
 
 h = xxhash.xxh64()
 def get_seed_for_document(document, epoch):
+    """Returns the seed to be used to set torch.manual_seed when doing dynamic masking
+
+    Args:
+        document: A string to get the seed for
+        epoch: The epoch to get the seed for
+
+    Returns:
+        An integer
+    """
     h.update(document.cpu().numpy())
     h.update(bytes(epoch))
     seed = h.intdigest()
     h.reset()
     return seed
-import torch
+
 from transformers import DataCollatorForLanguageModeling
-class DeterministicDataCollatorForLanguageModeling (DataCollatorForLanguageModeling):
-    epoch = None
-    
+import torch
+class DeterministicDataCollatorForLanguageModeling (DataCollatorForLanguageModeling): 
     def torch_mask_tokens(self, inputs, special_tokens_mask = None):
         """
-        Adapted to make masking determinsitic based on (text, epoch). 
+        Adapted to make dynamic masking determinsitic based on (text, epoch). 
         Just wrapped the original implementation in a for loop where a seed based on (labels, epoch) is set for each individual example before masking.
         """
-
         labels = inputs.clone()
-
-
-        
-
 
         if special_tokens_mask is None:
             special_tokens_mask = [

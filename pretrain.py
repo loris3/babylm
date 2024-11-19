@@ -47,7 +47,7 @@ os.environ["WANDB_PROJECT"]="babylm_pretraining"
 
 datasets = load_dataset(args.dataset)
 
-model_path =  os.path.join("models/", args.dataset.split("/")[-1])
+model_path =  os.path.join("models/", args.dataset.split("/")[-1] + args.curriculum.split(".")[0])
 if not os.path.exists(model_path):
     os.makedirs(model_path)
 

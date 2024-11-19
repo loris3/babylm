@@ -6,3 +6,5 @@ __pycache__
 temp.ipynb
 models/*
 wandb/*
+evaluation_data/*
+results/*

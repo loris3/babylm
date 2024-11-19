@@ -1,5 +1,6 @@
 import os
-os.environ['HF_HOME'] = '/data/loriss21dm/cache'
+from dotenv import load_dotenv
+load_dotenv()
 
 
 import argparse

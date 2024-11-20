@@ -15,6 +15,12 @@ def get_epoch_checkpoints(model_dir):
     #     epoch_checkpoints.pop()
     #     epoch_checkpoints.append(c[-1])
     return epoch_checkpoints
+from huggingface_hub import snapshot_download
+
+def get_checkpoints_hub(model):
+    local_dir = snapshot_download(repo_id=model, allow_patterns=["checkpoints/*"])
+    return [os.path.join(local_dir, f) for f in os.listdir(os.path.join(local_dir, "checkpoints"))]
+
 
 # def get_all_chunks(checkpoint_path,gradient_input_dir, gradients_per_file):
 #     return [ os.path.join(gradient_input_dir, checkpoint_path.split("-")[-1] + "_" + str(i) + "_" + str(i + gradients_per_file)) for i in range(0, len(dataset["train"]), args.gradients_per_file)]

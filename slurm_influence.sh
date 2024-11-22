@@ -1,12 +1,12 @@
 #!/bin/bash
 # script name: pretrain.sh
-#SBATCH --job-name="pretrain babylm"
-#SBATCH --comment="RoBERTa pretraining experiments"
-#SBATCH --time=0-07:00:00
-#SBATCH --gres=gpu:4
+#SBATCH --job-name="training data influence calculation"
+#SBATCH --comment="RoBERTa Training Data Influence Experiments"
+#SBATCH --time=0-20:00:00
+#SBATCH --gres=gpu:2
 #SBATCH --ntasks=1
-#SBATCH --mem-per-gpu=60G
-#SBATCH --cpus-per-task=30
+#SBATCH --mem=650G
+#SBATCH --cpus-per-task=36
 #SBATCH --nodelist=dgx-h100-em2
 source /etc/profile.d/modules.sh
 
@@ -17,13 +17,19 @@ export ENV_NAME="bayblm"
  
 # Load module miniforge3
 module load miniforge
- 
+echo $TMPDIR
+df -h $TMPDIR
 cd /srv/home/users/loriss21cs/babylm
-# E.g. to install networkx
+# cp -r /srv/home/users/loriss21cs/babylm/gradients $TMPDIR/gradients
+# df -h $TMPDIR
+# ls $TMPDIR/gradients
+
+
+
 conda env update --file environment.yml
 conda activate 
 # Run your python script
-python pretrain.py loris3/stratified_10m_curriculum curriculum.pt
+python calc_influence.py loris3/stratified_10m_curriculum_random loris3/stratified_10m_curriculum
  
 # Cleanup
 module purge

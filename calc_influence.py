@@ -11,7 +11,7 @@ parser = argparse.ArgumentParser("gradient_extraction")
 parser.add_argument("model", help="A model on the hf hub. Format: username/name_curriculum")
 parser.add_argument("dataset", help="A dataset on the hf hub. Format: username/name")
 parser.add_argument("--num_processes_gradients", help="Number of processes to use when obtaining gradients (one model per process)", type=int, nargs="?", const=1, default=6)
-parser.add_argument("--num_processes_merge", help="Number of processes to use when doing dot product (runs on cpu)", type=int, nargs="?", const=1, default=4)
+parser.add_argument("--num_processes_merge", help="Number of processes to use when doing dot product (runs on cpu)", type=int, nargs="?", const=1, default=3)
 # parser.add_argument("--cuda_visible_devices", help="Comma seperated GPU ids to use", nargs="?", const=1, default="0,1")
 parser.add_argument("--gradients_per_file", help="Number of gradients per output file", type=int, nargs="?", const=1, default=10000)
 parser.add_argument("--batch_size", help="How many chunks each subprocess will keep in memory", type=int, nargs="?", const=1, default=20)
@@ -26,9 +26,8 @@ model_name = args.dataset.split("/")[-1]
 # create output dirs
 
 
-if not os.path.exists("./gradients"):
-    os.makedirs("./gradients")
-gradient_output_dir = os.path.join("./gradients", model_name)
+
+gradient_output_dir = os.path.join("/tmp/gradients", model_name)
 if not os.path.exists(gradient_output_dir):
     os.makedirs(gradient_output_dir)
 
@@ -116,8 +115,7 @@ def get_for_checkpoint(checkpoint_path, i_start, i_end, completion_times_gradien
         gpu_id = queue.get()
         out_dir = os.path.join(gradient_output_dir, checkpoint_path.split("-")[-1])
         out_path = os.path.join(gradient_output_dir, checkpoint_path.split("-")[-1],str(i_start) + "_" + str(i_end))
-        if not os.path.exists(out_dir):
-            os.makedirs(out_dir)
+        os.makedirs(out_dir,exist_ok=True)
         if os.path.isfile(out_path):
             queue.put(gpu_id)
             logging.info("Skipping {}, already generated".format(out_path) )
@@ -163,7 +161,7 @@ def calc_partial(tasks, subtasks,completion_times_influence):
     """
 
 
-    setproctitle.setproctitle("(loris) max 650 GB RAM total")
+    setproctitle.setproctitle("(loris) max 500 GB RAM total")
     device = "cpu"
     
     try:
@@ -177,6 +175,7 @@ def calc_partial(tasks, subtasks,completion_times_influence):
                 
                 raise e
             logging.info(f"Time to load task: {time.time() - start_time:.4f} seconds")
+            print(f"Time to load task: {time.time() - start_time:.4f} seconds", flush=True)
             results = [torch.zeros((chunk_a.shape[0])).to(device) for chunk_a in chunks_a]
             start_time = time.time()
             for chunk_path_b,start_id_b, stop_id_b in subtasks:
@@ -231,8 +230,8 @@ from transformers import RobertaTokenizerFast
 tokenizer = RobertaTokenizerFast.from_pretrained(args.model, max_len=512)
 
 
-from util import get_epoch_checkpoints_hub
-checkpoints =  get_epoch_checkpoints_hub(args.model)
+from util import get_checkpoints_hub
+checkpoints =  get_checkpoints_hub(args.model)
 
 from util import DeterministicDataCollatorForLanguageModeling
 
@@ -263,7 +262,10 @@ if __name__ == '__main__':
 
     pool_gradients = Pool(args.num_processes_gradients)
     pool_merge = Pool(args.num_processes_merge)
+
+    print(sum(os.path.isdir(os.path.join(gradient_output_dir, item)) for item in os.listdir(gradient_output_dir)), "gradient folders waiting", flush=True)
     for checkpoint_nr, checkpoint in enumerate(checkpoints):
+        
         run.log({"gradients/checkpoint": checkpoint_nr},commit=True)
         #### 1. extract gradients ###
         out_path = os.path.join(influence_output_dir, checkpoint.split("-")[-1])
@@ -280,6 +282,8 @@ if __name__ == '__main__':
             #print("Tasks still running...", completion_times_gradients)
             while len(completion_times_gradients) > 0:
                 run.log({"gradients/time_per_chunk": completion_times_gradients.pop()},commit=True)
+            while len(completion_times_influence) > 0:
+                run.log({"influence/time_per_batch": completion_times_influence.pop()},commit=True)
             time.sleep(10)   
         run.log({"influence/checkpoint": checkpoint_nr},commit=True)
 
@@ -318,13 +322,22 @@ if __name__ == '__main__':
             for filename in os.listdir(os.path.join(gradient_output_dir, checkpoint.split("-")[-1])):
                 file_path = os.path.join(gradient_output_dir, checkpoint.split("-")[-1], filename)
                 os.remove(file_path)
+            os.rmdir(os.path.join(gradient_output_dir, checkpoint.split("-")[-1]))
         
         r = pool_merge.starmap_async(calc_partial, jobs, callback=lambda result,out_path=out_path,checkpoint=checkpoint: onPoolDone(result, out_path,checkpoint))
-        while not r.ready(): # to enable logging troughput: loop to not block the main process
-            #print("Tasks still running...", completion_times_influence)
+        print(sum(os.path.isdir(os.path.join(gradient_output_dir, item)) for item in os.listdir(gradient_output_dir)), "gradient folders waiting")
+
+        while sum(os.path.isdir(os.path.join(gradient_output_dir, item)) for item in os.listdir(gradient_output_dir)) > 1: # to enable logging troughput: loop to not block the main process
             while len(completion_times_influence) > 0:
                 run.log({"influence/time_per_batch": completion_times_influence.pop()},commit=True)
+            print("Waiting for influence queue to clear", flush=True)
             time.sleep(10)   
+            
+    while not r.ready(): # to enable logging troughput: loop to not block the main process
+        #print("Tasks still running...", completion_times_influence)
+        while len(completion_times_influence) > 0:
+            run.log({"influence/time_per_batch": completion_times_influence.pop()},commit=True)
+        time.sleep(10)   
         
 
     

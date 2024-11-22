@@ -19,7 +19,7 @@ from huggingface_hub import snapshot_download
 
 def get_checkpoints_hub(model):
     local_dir = snapshot_download(repo_id=model, allow_patterns=["checkpoints/*"])
-    return [os.path.join(local_dir, f) for f in os.listdir(os.path.join(local_dir, "checkpoints"))]
+    return [os.path.join(local_dir,"checkpoints", f) for f in os.listdir(os.path.join(local_dir, "checkpoints"))]
 
 
 # def get_all_chunks(checkpoint_path,gradient_input_dir, gradients_per_file):

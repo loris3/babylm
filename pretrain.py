@@ -1,8 +1,10 @@
 import os
+print(os.environ)
 from dotenv import load_dotenv
 load_dotenv()
 
-
+import os
+print(os.environ)
 import argparse
 import os
 from pathlib import Path
@@ -43,12 +45,12 @@ parser.add_argument("--cuda_visible_devices", help="Comma seperated GPU ids to u
 args = parser.parse_args()
 
 
-os.environ["CUDA_VISIBLE_DEVICES"] = args.cuda_visible_devices
+# os.environ["CUDA_VISIBLE_DEVICES"] = args.cuda_visible_devices
 os.environ["WANDB_PROJECT"]="babylm_pretraining"
 
 datasets = load_dataset(args.dataset)
 
-model_path =  os.path.join("models/", args.dataset.split("/")[-1] + args.curriculum.split(".")[0])
+model_path =  os.path.join("models/", args.dataset.split("/")[-1] +"_" +args.curriculum.split(".")[0])
 if not os.path.exists(model_path):
     os.makedirs(model_path)
 
@@ -171,7 +173,7 @@ class CurriculumTrainer(Trainer):
 from collections import defaultdict
 batch_metrics = defaultdict(lambda:0) 
 def compute_metrics(eval_pred, compute_result=True):
-    """Computes accuracy and MLM loss (ignore masked tokens) as in https://github.com/huggingface/transformers/blob/main/examples/flax/language-modeling/run_mlm_flax.py 
+    """Computes accuracy as in https://github.com/huggingface/transformers/blob/main/examples/flax/language-modeling/run_mlm_flax.py 
 
     Args:
         eval_pred: Tuple of logits and labels
@@ -186,19 +188,21 @@ def compute_metrics(eval_pred, compute_result=True):
         logits = torch.tensor(logits)
     if not torch.is_tensor(labels):
         labels = torch.tensor(labels)
-
+    # logits = logits.detach().cpu()
+    # labels = labels.detach().cpu()
     predictions = torch.argmax(logits, axis=-1)
     label_mask = torch.where(labels > 0, 1.0, 0.0)
 
     batch_metrics["accuracy"] += ((torch.equal(predictions, labels))* label_mask).sum()
-    batch_metrics["mlm_loss"] += (torch.nn.functional.cross_entropy(logits, torch.nn.functional.one_hot((labels*label_mask).to(torch.int64), logits.shape[-1]).to(torch.float64))* label_mask).sum()
+    
+    # batch_metrics["mlm_loss"] += (torch.nn.functional.cross_entropy(logits, torch.nn.functional.one_hot((labels*label_mask).to(torch.int64), logits.shape[-1]).to(torch.float64))* label_mask).sum()
     batch_metrics["normalizer"] += label_mask.sum() # number of non-masked labels, divide this when compute_result to get mean 
 
     if compute_result:
         result = {
             "accuracy": batch_metrics["accuracy"] / batch_metrics["normalizer"],
-            "mlm_perplexity": math.exp(batch_metrics["mlm_loss"] / batch_metrics["normalizer"]),
-            "mlm_loss": batch_metrics["mlm_loss"] / batch_metrics["normalizer"],
+            # "mlm_perplexity": math.exp(batch_metrics["mlm_loss"] / batch_metrics["normalizer"]),
+            # "mlm_loss": batch_metrics["mlm_loss"] / batch_metrics["normalizer"],
             "normalizer" : batch_metrics["normalizer"]
             }
         batch_metrics = defaultdict(lambda:0) 
@@ -239,8 +243,9 @@ training_args = TrainingArguments(
 
     # https://github.com/facebookresearch/fairseq/blob/main/examples/roberta/README.pretraining.md
     # for an effective batch size of  2048=16*64* 2 GPUS:
+    #                                 2048=16*32* 4 GPUS
         per_device_train_batch_size=64,
-        gradient_accumulation_steps=16,
+        gradient_accumulation_steps=8,
         learning_rate=5e-4, 
 
         adam_beta1=0.9,
@@ -253,7 +258,7 @@ training_args = TrainingArguments(
         eval_strategy="epoch",
         label_names=["labels"], # of eval_dataset
         batch_eval_metrics=True,
-        per_device_eval_batch_size=64,
+        per_device_eval_batch_size=8,
         eval_on_start = True,
 
     # logging
@@ -275,3 +280,26 @@ trainer = CurriculumTrainer(
     )
 trainer.train()  
 trainer.save_model(model_path)
+
+
+########
+model_name = os.path.basename(model_path)
+model.push_to_hub(model_name, private=True)
+tokenizer.push_to_hub(model_name, private=True)
+
+from huggingface_hub import HfApi
+from huggingface_hub import upload_folder
+api = HfApi()
+from util import get_epoch_checkpoints
+
+for checkpoint_path in get_epoch_checkpoints(model_path):
+
+    upload_folder(
+        folder_path=checkpoint_path,
+        path_in_repo="checkpoints/" + os.path.basename(checkpoint_path),
+        repo_id=api.whoami()["name"] + "/" + model_name,
+        repo_type="model",
+        multi_commits=True,
+        multi_commits_verbose=True,
+        create_pr=False,
+    )

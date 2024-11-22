@@ -45,7 +45,7 @@ parser.add_argument("--cuda_visible_devices", help="Comma seperated GPU ids to u
 args = parser.parse_args()
 
 
-# os.environ["CUDA_VISIBLE_DEVICES"] = args.cuda_visible_devices
+os.environ["CUDA_VISIBLE_DEVICES"] = args.cuda_visible_devices
 os.environ["WANDB_PROJECT"]="babylm_pretraining"
 
 datasets = load_dataset(args.dataset)
@@ -245,7 +245,7 @@ training_args = TrainingArguments(
     # for an effective batch size of  2048=16*64* 2 GPUS:
     #                                 2048=16*32* 4 GPUS
         per_device_train_batch_size=64,
-        gradient_accumulation_steps=8,
+        gradient_accumulation_steps=16,
         learning_rate=5e-4, 
 
         adam_beta1=0.9,

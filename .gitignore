@@ -10,3 +10,5 @@ evaluation_data/*
 results/*
 .env
 
+slurm-*.out
+conda*.txt

@@ -1,11 +1,11 @@
 #!/bin/bash
-# script name: extract_gradients.sh
-#SBATCH --job-name="influence computation"
-#SBATCH --comment="RoBERTa Training Data Influence Experiments. Runs after gradient extraction for checkpoint $3"
-#SBATCH --time=0-04:00:00
+# script name: delete_tmp_dir.sh
+#SBATCH --job-name="tmp dir test"
+
+#SBATCH --time=0-00:05:00
 #SBATCH --ntasks=1
-#SBATCH --mem=336GB
-#SBATCH --cpus-per-task=36
+#SBATCH --mem=1GB
+#SBATCH --cpus-per-task=2
 #SBATCH --nodelist=dgx-h100-em2
 
 source /etc/profile.d/modules.sh
@@ -18,16 +18,19 @@ export ENV_NAME="bayblm"
 # Load module miniforge3
 module load miniforge
 
+ls -lha $TMPDIR
+# rm -rf $TMPDIR/gradients
+df -h $TMPDIR
+
+# # df -h $TMPDIR/gradients
+
+# conda env update --file environment.yml
+# conda activate 
+# # Run your python script
 # df -h $TMPDIR/gradients
 # rm -rf $TMPDIR/gradients
-
-
 # df -h $TMPDIR/gradients
 
-conda env update --file environment.yml
-conda activate 
-# Run your python script
-python process_gradients.py $1 $2 $3
  
 # Cleanup
 module purge

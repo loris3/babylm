@@ -12,3 +12,6 @@ results/*
 
 slurm-*.out
 conda*.txt
+gradients/
+influence/
+old_logs

@@ -10,11 +10,7 @@ def get_epoch_checkpoints(model_dir):
     checkpoint_ids = sorted([int(str(x).split("-")[-1]) for x in Path(model_dir).glob("checkpoint-*")])
 
     return [os.path.join(model_dir,"checkpoint-{}".format(c)) for c in checkpoint_ids]
-    # epoch_checkpoints = c[5::6]
-    # if c[-1] not in epoch_checkpoints:
-    #     epoch_checkpoints.pop()
-    #     epoch_checkpoints.append(c[-1])
-    return epoch_checkpoints
+
 from huggingface_hub import snapshot_download
 
 def get_checkpoints_hub(model):
@@ -94,3 +90,26 @@ class DeterministicDataCollatorForLanguageModeling (DataCollatorForLanguageModel
         return inputs, labels
     def set_epoch(self, epoch):
         self.epoch = epoch
+from huggingface_hub import hf_hub_download
+import json
+def get_stage_end_epochs(model_name):
+    checkpoints = sorted([get_epoch(checkpoint_path) for checkpoint_path in get_checkpoints_hub(model_name)])
+    if "random" in model_name:
+        return checkpoints
+    info = None
+    with open(hf_hub_download(repo_id=model_name.rsplit("_", 1)[0], filename="info.json", repo_type="dataset")) as f:
+        info = json.load(f)
+    stage_lenght = len(checkpoints) // len(info["curriculum"])
+    return checkpoints[stage_lenght-1::stage_lenght]
+
+import psutil
+def get_pool_memory_usage(pool):
+    memory_usage = 0
+    for process in pool._pool:
+        try:
+            proc = psutil.Process(process.pid)
+            memory_info = proc.memory_info()
+            memory_usage += memory_info.rss 
+        except psutil.NoSuchProcess:
+            pass
+    return memory_usage / (1024 ** 3)

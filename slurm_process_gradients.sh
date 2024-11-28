@@ -2,9 +2,9 @@
 # script name: extract_gradients.sh
 #SBATCH --job-name="influence computation"
 #SBATCH --comment="RoBERTa Training Data Influence Experiments. Runs after gradient extraction for checkpoint $3"
-#SBATCH --time=0-04:00:00
+#SBATCH --time=0-02:00:00
 #SBATCH --ntasks=1
-#SBATCH --mem=336GB
+#SBATCH --mem=795GB
 #SBATCH --cpus-per-task=36
 #SBATCH --nodelist=dgx-h100-em2
 
@@ -24,7 +24,7 @@ module load miniforge
 
 # df -h $TMPDIR/gradients
 
-conda env update --file environment.yml
+# conda env update --file environment.yml
 conda activate 
 # Run your python script
 python process_gradients.py $1 $2 $3

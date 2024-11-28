@@ -18,7 +18,7 @@ parser.add_argument("checkpoint_nr", help="Id of the checkpoint to extract gradi
 parser.add_argument("--num_processes", help="Number of processes to use when doing dot product (runs on cpu)", type=int, nargs="?", const=1, default=1)
 # parser.add_argument("--cuda_visible_devices", help="Comma seperated GPU ids to use", nargs="?", const=1, default="0,1")
 parser.add_argument("--gradients_per_file", help="Number of gradients per output file", type=int, nargs="?", const=1, default=10000)
-parser.add_argument("--batch_size", help="How many chunks each subprocess will keep in memory", type=int, nargs="?", const=1, default=40)
+parser.add_argument("--batch_size", help="How many chunks each subprocess will keep in memory", type=int, nargs="?", const=1, default=108)
 
 args = parser.parse_args()
 
@@ -81,7 +81,7 @@ import torch
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-def calc_partial(tasks, subtasks,completion_times_influence):
+def calc_partial(tasks, subtasks,completion_times_influence, einsum_times_influence):
     """Calculates mean TracinCP influence for the items in each chunk in `tasks` on all other items in the training data. Effectively just does items.dot(items.T).mean() but in batches.
 
     Args:
@@ -99,52 +99,48 @@ def calc_partial(tasks, subtasks,completion_times_influence):
     setproctitle.setproctitle("(loris) max 500 GB RAM total")
     device = "cpu"
     
-    try:
-        with torch.no_grad():
-            chunks_a = None
-      
-            start_time = time.time()
-            load_fn = lambda chunk_path: torch.load(chunk_path, weights_only=True, map_location=device).flatten(1)
-            try:
-               
-                
-                with ThreadPoolExecutor(max_workers=50) as executor:
-                    chunks_a = list(executor.map(lambda task: load_fn(task[0]), tasks))
 
-                print("num chunks", len(chunks_a), flush=True)
-                total_size_gb = lambda tensors: sum(t.element_size() * t.numel() for t in tensors) / (1024**3)
-                print("size", total_size_gb(chunks_a), flush=True)
-               # chunks_a = [torch.load(chunk_path_a, weights_only=True,map_location=device).flatten(1) for (chunk_path_a,start_id_a, stop_id_a) in tasks]
-            except Exception as e:
-                logging.error("{} seems corrupted (recompute!)".format(tasks) ) # this happens if the gradient extraction script was killed during torch.save
-                logging.error(traceback.format_exc())
-                
-                raise e
-            logging.info(f"Time to load task: {time.time() - start_time:.4f} seconds")
-            print(f"Time to load task: {time.time() - start_time:.4f} seconds", flush=True)
-            results = [torch.zeros((chunk_a.shape[0])).to(device) for chunk_a in chunks_a]
-            start_time = time.time()
+    with torch.no_grad():
+        chunks_a = None
+    
+        start_time = time.time()
+        # load task (of batch_size chunks)
+        load_fn = lambda chunk_path: torch.load(chunk_path, weights_only=True, map_location=device).flatten(1)
 
+        with ThreadPoolExecutor(max_workers=50) as executor:
+            chunks_a = list(executor.map(lambda task: load_fn(task[0]), tasks))
 
-            for chunk_path_b,start_id_b, stop_id_b in subtasks:
-                try:
-                    chunk_b = torch.load(chunk_path_b, weights_only=True,map_location=device).flatten(1)
-                except Exception as e:
-                    logging.error("{} seems corrupted (recompute!)".format(chunk_path_b) )
-                    logging.error(traceback.format_exc())
-                    # this happens if the gradient extraction script was killed during torch.save
-                    
-                    raise e
-                for i, chunk_a in enumerate(chunks_a):
-                    results[i]  += torch.einsum('ik, kj -> i', chunk_a, chunk_b.T)
-            logging.info(f"Time to einsum: {time.time() - start_time:.4f} seconds; {(time.time() - start_time)/len(subtasks):.4f} s/chunk")
-            completion_times_influence.append(time.time() - start_time)
-            return (tasks, results)
+        print("num chunks", len(chunks_a), flush=True)
+        total_size_gb = lambda tensors: sum(t.element_size() * t.numel() for t in tensors) / (1024**3)
+        print("size", total_size_gb(chunks_a), flush=True)
+        # chunks_a = [torch.load(chunk_path_a, weights_only=True,map_location=device).flatten(1) for (chunk_path_a,start_id_a, stop_id_a) in tasks]
+
+        logging.info(f"Time to load task: {time.time() - start_time:.4f} seconds")
+        print(f"Time to load task: {time.time() - start_time:.4f} seconds", flush=True)
+        results = [torch.zeros((chunk_a.shape[0])).to(device) for chunk_a in chunks_a]
+        start_time = time.time()
+
+        tasks_paths = list(zip(*tasks))[0]
+
+        # reuse the chunks in chunks_a if they are in this subtask
+        def load_cached(chunk_path):
+            if chunk_path in tasks_paths:
+                return chunks_a[tasks_paths.index(chunk_path)]
+            else:
+                return torch.load(chunk_path, weights_only=True, map_location=device).flatten(1)
+
+        for chunk_path_b,start_id_b, stop_id_b in subtasks:
+            chunk_b = load_cached(chunk_path_b)
+            start_time_einsum = time.time()
+            for i, chunk_a in enumerate(chunks_a):
+                results[i]  += torch.einsum('ik, kj -> i', chunk_a, chunk_b.T)
+            einsum_times_influence.append(time.time() - start_time_einsum)
+        logging.info(f"Time to einsum: {time.time() - start_time:.4f} seconds; {(time.time() - start_time)/len(subtasks):.4f} s/chunk")
+        completion_times_influence.append(time.time() - start_time)
+        return (tasks, results)
 
 
-    except Exception as e:
-        logging.error(traceback.format_exc())
-        raise e
+
 
 
 import math
@@ -172,7 +168,7 @@ import torch
 from itertools import cycle
 
 
-
+import sys
 
 from transformers import RobertaTokenizerFast
 
@@ -192,19 +188,18 @@ data_collator = DeterministicDataCollatorForLanguageModeling(
 
 import itertools
 import subprocess
-from util import get_epoch_checkpoints
-
+import sys
 
 from multiprocessing import Pool, Manager
 import glob
 
 import shutil
 if __name__ == '__main__':
-    run = wandb.init(project="babylm_influence_computation")
-    run.name = os.path.join(args.model, os.getenv("SLURM_JOB_NAME", "?"))
+    
     manager = Manager()
 
     completion_times_influence = manager.list() 
+    einsum_times_influence = manager.list() 
 
 
     pool_merge = Pool(args.num_processes)
@@ -241,9 +236,11 @@ if __name__ == '__main__':
     out_path = os.path.join(influence_output_dir, checkpoint.split("-")[-1])
     if os.path.isfile(out_path):
         logging.info("Skipping {}, already calculated".format(out_path) )
-        run.delete()
+        
         
     else:
+        run = wandb.init(project="babylm_influence_computation")
+        run.name = os.path.join(args.model, os.getenv("SLURM_JOB_NAME", "?"))
 
             #### 2. calculate mean influence ###
         logging.info("Calculating influence for checkpoint-{}".format(checkpoint))
@@ -263,49 +260,39 @@ if __name__ == '__main__':
         print("subtasks", len(subtasks), flush=True)
         for tasks in batch(subtasks, args.batch_size):
             print("tasks", len(tasks),flush=True)
-            jobs.append((tasks, subtasks,completion_times_influence))
+            jobs.append((tasks, subtasks,completion_times_influence, einsum_times_influence))
        
         print("jobs", len(jobs),flush=True)
-        def onPoolDone(r, out_path,checkpoint):
-            print("onPoolDone", flush=True)
-            result_checkpoint = torch.zeros((len(dataset)))
-            for rr in r:
-                for task, result in zip(*rr):
-                    chunk_path_a, start_id_a, stop_id_a = task
-                    result_checkpoint[start_id_a:(start_id_a + result.shape[0])] += result #  the stop_ids are taken from the task description in if.ipynb and can therefore be higher than the actual lenght
-            result_checkpoint = (result_checkpoint / len(dataset)).unsqueeze(0)   
-            torch.save(result_checkpoint, out_path)
-            logging.info("Saved influence for checkpoint".format(out_path))
-            logging.info("Deleting gradients for {}".format(checkpoint))
-            
-            shutil.rmtree(path_remote, ignore_errors=True)
-            # delete on remote
-            # shutil.rmtree(path_local, ignore_errors=True)
 
-        
-        r = pool_merge.starmap_async(calc_partial, jobs, callback=lambda result,out_path=out_path,checkpoint=checkpoint: onPoolDone(result, out_path,checkpoint))
-        print(sum(os.path.isdir(os.path.join(gradient_output_dir, item)) for item in os.listdir(gradient_output_dir)), "gradient folders waiting")
 
-        import psutil
-        def get_pool_memory_usage(pool):
-            memory_usage = 0
-            for process in pool._pool:
-                try:
-                    proc = psutil.Process(process.pid)
-                    memory_info = proc.memory_info()
-                    memory_usage += memory_info.rss 
-                except psutil.NoSuchProcess:
-                    pass
-            return memory_usage / (1024 ** 3)
+
+        r = pool_merge.starmap_async(calc_partial, jobs)
         
         while not r.ready(): # to enable logging troughput: loop to not block the main process
             #print("Tasks still running...", completion_times_influence)
             while len(completion_times_influence) > 0:
                 run.log({"influence/time_per_batch": completion_times_influence.pop()}, commit=True)
-            run.log({"influence/pool_ram_usage":get_pool_memory_usage(pool_merge)}, commit=True)
+            while len(einsum_times_influence) > 0:
+                run.log({"influence/time_einsum_per_chunk": einsum_times_influence.pop()}, commit=True)
+            run.log({"influence/pool_ram_usage":util.get_pool_memory_usage(pool_merge)}, commit=True)
             time.sleep(10)   
-        logging.info("Got influence for checkpoint-{}".format(checkpoint))
-        pool_merge.close()
-        pool_merge.join()
+        print("onPoolDone", flush=True)
+        result_checkpoint = torch.zeros((len(dataset)))
+        for rr in r.get():
+            for task, result in zip(*rr):
+                chunk_path_a, start_id_a, stop_id_a = task
+                result_checkpoint[start_id_a:(start_id_a + result.shape[0])] += result #  the stop_ids are taken from the task description in if.ipynb and can therefore be higher than the actual lenght
+        result_checkpoint = (result_checkpoint / len(dataset)).unsqueeze(0)   
+        torch.save(result_checkpoint, out_path)
+        logging.info("Saved influence for checkpoint".format(out_path))
+        logging.info("Deleting gradients for {}".format(checkpoint))
+        
+        shutil.rmtree(path_remote, ignore_errors=True)
+        
+    pool_merge.close()
+    pool_merge.join()
+    logging.info("Got influence for checkpoint-{}".format(checkpoint))
+    
+
 
 

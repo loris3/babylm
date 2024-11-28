@@ -33,7 +33,7 @@ parser = argparse.ArgumentParser("gradient_extraction")
 parser.add_argument("model", help="A model on the hf hub. Format: username/name_curriculum")
 parser.add_argument("dataset", help="A dataset on the hf hub. Format: username/name")
 parser.add_argument("checkpoint_nr", help="Id of the checkpoint to extract gradients for (starting at 0)",type=int)
-parser.add_argument("--num_processes_gradients", help="Number of processes to use when obtaining gradients (one model per process)", type=int, nargs="?", const=1, default=12) # 12 w 4 gpus -> 3 models per gpu
+parser.add_argument("--num_processes_gradients", help="Number of processes to use when obtaining gradients (one model per process)", type=int, nargs="?", const=1, default=8) # 12 w 4 gpus -> 3 models per gpu
 parser.add_argument("--gradients_per_file", help="Number of gradients per output file", type=int, nargs="?", const=1, default=10000) # ~7.4 GB per file for BERT
 
 args = parser.parse_args()
@@ -176,8 +176,7 @@ gpu_queue = Queue()
 
 
 if __name__ == '__main__':
-    run = wandb.init(project="babylm_gradient_extraction")
-    run.name = os.path.join(args.model, os.getenv("SLURM_JOB_NAME", "?"))
+    
 
     # set up gpu queue to allocate gpus evenly between processes
     for _ in range(args.num_processes_gradients//torch.cuda.device_count()):
@@ -195,8 +194,9 @@ if __name__ == '__main__':
 
     if os.path.isfile(out_path):
         logging.info("Skipping {}, already calculated".format(out_path) )
-        run.delete()
     else:
+        run = wandb.init(project="babylm_gradient_extraction")
+        run.name = os.path.join(args.model, os.getenv("SLURM_JOB_NAME", "?"))
         logging.info("Getting gradients for checkpoint-{}".format(checkpoint))
 
         # create tasks for subprocesses
@@ -209,8 +209,9 @@ if __name__ == '__main__':
         while not r.ready(): # loop to not block the main process
             while len(completion_times_gradients) > 0:
                 run.log({"gradients/time_per_chunk": completion_times_gradients.pop()},commit=True)
+            run.log({"gradients/pool_ram_usage":util.get_pool_memory_usage(pool_gradients)}, commit=True)
             time.sleep(10)  
         
         logging.info("Got gradients for checkpoint-{}".format(checkpoint))
-        pool_gradients.close()
-        pool_gradients.join()
+    pool_gradients.close()
+    pool_gradients.join()

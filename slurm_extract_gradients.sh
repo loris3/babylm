@@ -24,7 +24,7 @@ module load miniforge
 
 
 
-conda env update --file environment.yml
+# conda env update --file environment.yml
 conda activate 
 # Run your python script
 python extract_gradients.py $1 $2 $3

@@ -12,3 +12,6 @@ results/*
 
 slurm-*.out
 conda*.txt
+babylm_data_preprocessing
+influence/*
+babylm_data_preprocessing

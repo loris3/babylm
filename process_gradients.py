@@ -1,9 +1,13 @@
 import argparse
 import os
+
 import setproctitle
 from dotenv import load_dotenv
 load_dotenv()
+import wandb
 
+from functools import partial
+from multiprocessing.pool import ThreadPool
 
 
 parser = argparse.ArgumentParser("gradient_extraction")
@@ -11,10 +15,10 @@ parser = argparse.ArgumentParser("gradient_extraction")
 parser.add_argument("model", help="A model on the hf hub. Format: username/name_curriculum")
 parser.add_argument("dataset", help="A dataset on the hf hub. Format: username/name")
 parser.add_argument("checkpoint_nr", help="Id of the checkpoint to extract gradients for (starting at 0)",type=int)
-parser.add_argument("--num_processes", help="Number of processes to use when doing dot product (runs on cpu)", type=int, nargs="?", const=1, default=3)
+parser.add_argument("--num_processes", help="Number of processes to use when doing dot product (runs on cpu)", type=int, nargs="?", const=1, default=1)
 # parser.add_argument("--cuda_visible_devices", help="Comma seperated GPU ids to use", nargs="?", const=1, default="0,1")
 parser.add_argument("--gradients_per_file", help="Number of gradients per output file", type=int, nargs="?", const=1, default=10000)
-parser.add_argument("--batch_size", help="How many chunks each subprocess will keep in memory", type=int, nargs="?", const=1, default=20)
+parser.add_argument("--batch_size", help="How many chunks each subprocess will keep in memory", type=int, nargs="?", const=1, default=40)
 
 args = parser.parse_args()
 
@@ -27,7 +31,7 @@ model_name = args.dataset.split("/")[-1]
 
 
 
-gradient_output_dir = os.path.join("/tmp/gradients", model_name)
+gradient_output_dir = os.path.join("./gradients", model_name)
 if not os.path.exists(gradient_output_dir):
     os.makedirs(gradient_output_dir)
 
@@ -75,6 +79,7 @@ import util
 
 import torch 
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 def calc_partial(tasks, subtasks,completion_times_influence):
     """Calculates mean TracinCP influence for the items in each chunk in `tasks` on all other items in the training data. Effectively just does items.dot(items.T).mean() but in batches.
@@ -96,9 +101,20 @@ def calc_partial(tasks, subtasks,completion_times_influence):
     
     try:
         with torch.no_grad():
+            chunks_a = None
+      
             start_time = time.time()
+            load_fn = lambda chunk_path: torch.load(chunk_path, weights_only=True, map_location=device).flatten(1)
             try:
-                chunks_a = [torch.load(chunk_path_a, weights_only=True,map_location=device).flatten(1) for (chunk_path_a,start_id_a, stop_id_a) in tasks]
+               
+                
+                with ThreadPoolExecutor(max_workers=50) as executor:
+                    chunks_a = list(executor.map(lambda task: load_fn(task[0]), tasks))
+
+                print("num chunks", len(chunks_a), flush=True)
+                total_size_gb = lambda tensors: sum(t.element_size() * t.numel() for t in tensors) / (1024**3)
+                print("size", total_size_gb(chunks_a), flush=True)
+               # chunks_a = [torch.load(chunk_path_a, weights_only=True,map_location=device).flatten(1) for (chunk_path_a,start_id_a, stop_id_a) in tasks]
             except Exception as e:
                 logging.error("{} seems corrupted (recompute!)".format(tasks) ) # this happens if the gradient extraction script was killed during torch.save
                 logging.error(traceback.format_exc())
@@ -108,6 +124,8 @@ def calc_partial(tasks, subtasks,completion_times_influence):
             print(f"Time to load task: {time.time() - start_time:.4f} seconds", flush=True)
             results = [torch.zeros((chunk_a.shape[0])).to(device) for chunk_a in chunks_a]
             start_time = time.time()
+
+
             for chunk_path_b,start_id_b, stop_id_b in subtasks:
                 try:
                     chunk_b = torch.load(chunk_path_b, weights_only=True,map_location=device).flatten(1)
@@ -122,6 +140,7 @@ def calc_partial(tasks, subtasks,completion_times_influence):
             logging.info(f"Time to einsum: {time.time() - start_time:.4f} seconds; {(time.time() - start_time)/len(subtasks):.4f} s/chunk")
             completion_times_influence.append(time.time() - start_time)
             return (tasks, results)
+
 
     except Exception as e:
         logging.error(traceback.format_exc())
@@ -174,17 +193,15 @@ data_collator = DeterministicDataCollatorForLanguageModeling(
 import itertools
 import subprocess
 from util import get_epoch_checkpoints
-queue = Queue()
 
-for _ in range(args.num_processes//torch.cuda.device_count()):
-    for i in range(torch.cuda.device_count()):
-        queue.put(i)
 
 from multiprocessing import Pool, Manager
+import glob
 
-
+import shutil
 if __name__ == '__main__':
-  
+    run = wandb.init(project="babylm_influence_computation")
+    run.name = os.path.join(args.model, os.getenv("SLURM_JOB_NAME", "?"))
     manager = Manager()
 
     completion_times_influence = manager.list() 
@@ -195,10 +212,36 @@ if __name__ == '__main__':
     print(sum(os.path.isdir(os.path.join(gradient_output_dir, item)) for item in os.listdir(gradient_output_dir)), "gradient folders waiting", flush=True)
     checkpoint = checkpoints[args.checkpoint_nr]
         
+    # copy gradients to local filesystem
 
+    gradient_output_dir_local = os.path.join("/tmp/gradients", model_name)
+    path_remote = os.path.join(gradient_output_dir, checkpoint.split("-")[-1])
+    path_local = os.path.join(gradient_output_dir_local, checkpoint.split("-")[-1])
+
+    ##########################
+    # if not os.path.exists(path_local):
+    #     os.makedirs(path_local)
+
+
+    # def copy_tp(src, dst=path_local):
+    #     dest_file = os.path.join(dst, os.path.basename(src))
+    #     if not os.path.exists(dest_file):
+    #         shutil.copy(src, dest_file)
+    
+    # files = glob.glob(os.path.join(path_remote, '*'))
+    # print("copy", path_remote, path_local,files)
+    # with ThreadPool(20) as p:
+    #     p.map(copy_tp, files)
+    # print("copied", flush=True)
+
+    # gradient_output_dir = gradient_output_dir_local
+
+    ###############
+    print(sum(os.path.isdir(os.path.join(gradient_output_dir, item)) for item in os.listdir(gradient_output_dir)), "gradient folders waiting", flush=True)
     out_path = os.path.join(influence_output_dir, checkpoint.split("-")[-1])
     if os.path.isfile(out_path):
         logging.info("Skipping {}, already calculated".format(out_path) )
+        run.delete()
         
     else:
 
@@ -209,6 +252,7 @@ if __name__ == '__main__':
         # specify tasks for subprocesses
         jobs = []
         subtasks = []
+        print("get_all_chunks(checkpoint)", len(get_all_chunks(checkpoint)), flush=True)
         for chunk_path_b in get_all_chunks(checkpoint):
             #print("chunk_path_b",chunk_path_b)
             start_id_b, stop_id_b = os.path.basename(chunk_path_b).split( "_")
@@ -216,11 +260,14 @@ if __name__ == '__main__':
             stop_id_b = int(stop_id_b)
             subtasks.append((chunk_path_b,start_id_b, stop_id_b, ))
 
+        print("subtasks", len(subtasks), flush=True)
         for tasks in batch(subtasks, args.batch_size):
+            print("tasks", len(tasks),flush=True)
             jobs.append((tasks, subtasks,completion_times_influence))
-
+       
+        print("jobs", len(jobs),flush=True)
         def onPoolDone(r, out_path,checkpoint):
-            print("onPoolDone",r, flush=True)
+            print("onPoolDone", flush=True)
             result_checkpoint = torch.zeros((len(dataset)))
             for rr in r:
                 for task, result in zip(*rr):
@@ -231,22 +278,34 @@ if __name__ == '__main__':
             logging.info("Saved influence for checkpoint".format(out_path))
             logging.info("Deleting gradients for {}".format(checkpoint))
             
+            shutil.rmtree(path_remote, ignore_errors=True)
             # delete on remote
-            for filename in os.listdir(os.path.join("./gradients", checkpoint.split("-")[-1])):
-                file_path = os.path.join("./gradients", checkpoint.split("-")[-1], filename)
-                os.remove(file_path)
-            os.rmdir(os.path.join("./gradients", checkpoint.split("-")[-1]))
+            # shutil.rmtree(path_local, ignore_errors=True)
+
         
         r = pool_merge.starmap_async(calc_partial, jobs, callback=lambda result,out_path=out_path,checkpoint=checkpoint: onPoolDone(result, out_path,checkpoint))
         print(sum(os.path.isdir(os.path.join(gradient_output_dir, item)) for item in os.listdir(gradient_output_dir)), "gradient folders waiting")
 
-    
-            
+        import psutil
+        def get_pool_memory_usage(pool):
+            memory_usage = 0
+            for process in pool._pool:
+                try:
+                    proc = psutil.Process(process.pid)
+                    memory_info = proc.memory_info()
+                    memory_usage += memory_info.rss 
+                except psutil.NoSuchProcess:
+                    pass
+            return memory_usage / (1024 ** 3)
+        
         while not r.ready(): # to enable logging troughput: loop to not block the main process
             #print("Tasks still running...", completion_times_influence)
             while len(completion_times_influence) > 0:
-                logging.info({"influence/time_per_batch": completion_times_influence.pop()})
+                run.log({"influence/time_per_batch": completion_times_influence.pop()}, commit=True)
+            run.log({"influence/pool_ram_usage":get_pool_memory_usage(pool_merge)}, commit=True)
             time.sleep(10)   
-            
+        logging.info("Got influence for checkpoint-{}".format(checkpoint))
+        pool_merge.close()
+        pool_merge.join()
 
 

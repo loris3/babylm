@@ -15,3 +15,7 @@ conda*.txt
 babylm_data_preprocessing
 influence/*
 babylm_data_preprocessing
+
+gradients/
+influence/
+old_logs

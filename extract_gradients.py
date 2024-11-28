@@ -1,52 +1,57 @@
 import argparse
 import os
-import setproctitle
+
+
 from dotenv import load_dotenv
 load_dotenv()
 
-
-
-parser = argparse.ArgumentParser("gradient_extraction")
-
-parser.add_argument("model", help="A model on the hf hub. Format: username/name_curriculum")
-parser.add_argument("dataset", help="A dataset on the hf hub. Format: username/name")
-parser.add_argument("checkpoint_nr", help="Id of the checkpoint to extract gradients for (starting at 0)",type=int)
-parser.add_argument("--num_processes_gradients", help="Number of processes to use when obtaining gradients (one model per process)", type=int, nargs="?", const=1, default=6)
-# parser.add_argument("--cuda_visible_devices", help="Comma seperated GPU ids to use", nargs="?", const=1, default="0,1")
-parser.add_argument("--gradients_per_file", help="Number of gradients per output file", type=int, nargs="?", const=1, default=10000)
-
-args = parser.parse_args()
-
-import json
-
-from datasets import load_dataset
-import datasets
-model_name = args.dataset.split("/")[-1]
-# create output dirs
-
-
-
-gradient_output_dir = os.path.join("./gradients", model_name)
-if not os.path.exists(gradient_output_dir):
-    os.makedirs(gradient_output_dir)
-influence_output_dir = os.path.join("./influence", model_name)
-if not os.path.exists(influence_output_dir):
-    os.makedirs(influence_output_dir)
-
-# os.environ["CUDA_VISIBLE_DEVICES"] = args.cuda_visible_devices
-os.environ["TOKENIZERS_PARALLELISM"] = "True"
-
-
-
-# run.save()
-
-
+import wandb
 from transformers import RobertaConfig,AutoConfig
 from transformers import RobertaForMaskedLM
 import torch
 import traceback
-
 import logging
+
+from datasets import load_dataset
+import util
+import time
+import util
+import torch 
+
+from util import get_checkpoints_hub
+from util import DeterministicDataCollatorForLanguageModeling
+
+from multiprocessing import Pool, Queue, Manager
+
+import math
+from sklearn.utils import gen_even_slices
+from transformers import RobertaTokenizerFast
+
+os.environ["TOKENIZERS_PARALLELISM"] = "True"
+
+parser = argparse.ArgumentParser("gradient_extraction")
+parser.add_argument("model", help="A model on the hf hub. Format: username/name_curriculum")
+parser.add_argument("dataset", help="A dataset on the hf hub. Format: username/name")
+parser.add_argument("checkpoint_nr", help="Id of the checkpoint to extract gradients for (starting at 0)",type=int)
+parser.add_argument("--num_processes_gradients", help="Number of processes to use when obtaining gradients (one model per process)", type=int, nargs="?", const=1, default=12) # 12 w 4 gpus -> 3 models per gpu
+parser.add_argument("--gradients_per_file", help="Number of gradients per output file", type=int, nargs="?", const=1, default=10000) # ~7.4 GB per file for BERT
+
+args = parser.parse_args()
+
+
+model_name = args.dataset.split("/")[-1]
+
+
+# create output dirs
+gradient_output_dir = os.path.join("./gradients", model_name)
+if not os.path.exists(gradient_output_dir):
+    os.makedirs(gradient_output_dir)
+influence_output_dir = os.path.join("./influence", model_name) # this script skips computing existing results
+if not os.path.exists(influence_output_dir):
+    os.makedirs(influence_output_dir)
+
+
+
 logging.basicConfig(
                     level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s')
@@ -54,27 +59,21 @@ logging.basicConfig(
 
 
 
-import util
-
-from tqdm import tqdm
-import time
-
-
 def get_loss_gradient(model, example,device):
-    """Computes gradient of the loss function irt to the input
+    """Computes gradient of the loss function irt to the input embeddings for MLM.
 
     Args:
         model: A model with a `forward` method wich returns `loss`
         example: A string from the training data
-        device: What GPU to use
+        device: What GPU to use (e.g., cuda:0)
 
     Returns:
-        A 1D tensor: gradient of the loss function irt to the input
+        A 1D tensor: gradient of the loss function irt to the input embeddings
     """
     
     model.zero_grad()
     
-    input_ids, labels = data_collator((torch.tensor(example),)).values()
+    input_ids, labels = data_collator((torch.tensor(example),)).values() # the data_collator used here applies the exact same mask used in the respective epoch
     inputs_embeds=model.get_input_embeddings().weight[input_ids].to(device)
     inputs_embeds.retain_grad()
 
@@ -86,10 +85,8 @@ def get_loss_gradient(model, example,device):
     loss.retain_grad()
     return  torch.autograd.grad(loss, inputs_embeds, retain_graph=False)[0].squeeze()
 
-import datasets
-dataset = load_dataset(args.dataset)["train"]
-dataset.set_transform(lambda x : tokenizer(x["text"], return_special_tokens_mask=True, truncation=True, padding="max_length", max_length=512))
-import util
+
+
 def get_for_checkpoint(checkpoint_path, i_start, i_end, completion_times_gradients):
     """Calculates gradients at a given checkpoint for a given subset and stores it to disk
 
@@ -100,19 +97,17 @@ def get_for_checkpoint(checkpoint_path, i_start, i_end, completion_times_gradien
 
     Raises:
         e: Any error but most likely OOM
-    """
-    setproctitle.setproctitle("(loris:0,1) max 12516 MiB/GPU can share")
-                         
+    """                         
 
 
     data_collator.set_epoch(util.get_epoch(checkpoint_path)) # to ensure the same masking as during training
     try:
-        gpu_id = queue.get()
+        gpu_id = gpu_queue.get()
         out_dir = os.path.join(gradient_output_dir, checkpoint_path.split("-")[-1])
         out_path = os.path.join(gradient_output_dir, checkpoint_path.split("-")[-1],str(i_start) + "_" + str(i_end))
         os.makedirs(out_dir,exist_ok=True)
         if os.path.isfile(out_path):
-            queue.put(gpu_id)
+            gpu_queue.put(gpu_id)
             logging.info("Skipping {}, already generated".format(out_path) )
             return 
 
@@ -127,7 +122,7 @@ def get_for_checkpoint(checkpoint_path, i_start, i_end, completion_times_gradien
         print(f"Time to get gradients: {time.time() - start_time:.4f} s/chunk", flush=True)
         
         torch.save( gradients, out_path)
-        queue.put(gpu_id)
+        gpu_queue.put(gpu_id)
         completion_times_gradients.append(time.time() - start_time)
    
     except Exception as e:
@@ -135,91 +130,87 @@ def get_for_checkpoint(checkpoint_path, i_start, i_end, completion_times_gradien
         raise e
 
 
-##########################################
 
 
-import torch 
-import time
-
-
-import math
-from sklearn.utils import gen_even_slices
 def batch(lst, batch_size):
-        for i in gen_even_slices(len(lst), math.ceil(len(lst)/batch_size)):
-            yield lst[i]
+    """Creates a list of lists with an even number of elements close to `batch_size`. Used to evenly divide jobs between processes.
+
+    Args:
+        lst: a list
+        batch_size: the target/maximum batch size
+
+    Yields:
+        a list of lists of even size close to `batch_size` in size
+    """
+    for i in gen_even_slices(len(lst), math.ceil(len(lst)/batch_size)):
+        yield lst[i]
         
 def get_all_chunks(checkpoint_path):
+    """Returns output paths
+
+    Args:
+        checkpoint_path: A path to a model checkpoint
+
+    Returns:
+        A list of paths to the individual chunks generated
+    """
     return [ os.path.join(gradient_output_dir, checkpoint_path.split("-")[-1],str(i) + "_" + str(i + args.gradients_per_file)) for i in range(0, len(dataset), args.gradients_per_file)]
     
-    return [str(x) for x in Path(checkpoint_path).glob("*")]
 
 
 
-
-
-#########################################
-from multiprocessing import Pool, current_process, Queue
-import time 
-import datetime
-import os
-from pathlib import Path
-import torch
-from itertools import cycle
-
-
-
-
-from transformers import RobertaTokenizerFast
-
+dataset = load_dataset(args.dataset)["train"]
+dataset.set_transform(lambda x : tokenizer(x["text"], return_special_tokens_mask=True, truncation=True, padding="max_length", max_length=512))
 tokenizer = RobertaTokenizerFast.from_pretrained(args.model, max_len=512)
 
 
-from util import get_checkpoints_hub
-checkpoints =  get_checkpoints_hub(args.model)
 
-from util import DeterministicDataCollatorForLanguageModeling
+checkpoints =  get_checkpoints_hub(args.model)
 
 data_collator = DeterministicDataCollatorForLanguageModeling(
     tokenizer=tokenizer, mlm=True, mlm_probability=0.15
 )
 
+gpu_queue = Queue()
 
 
-import itertools
-import subprocess
-from util import get_epoch_checkpoints
-queue = Queue()
 
-for _ in range(args.num_processes_gradients//torch.cuda.device_count()):
-    for i in range(torch.cuda.device_count()):
-        queue.put(i)
-
-from multiprocessing import Pool, Manager
-
-import sys
 if __name__ == '__main__':
+    run = wandb.init(project="babylm_gradient_extraction")
+    run.name = os.path.join(args.model, os.getenv("SLURM_JOB_NAME", "?"))
+
+    # set up gpu queue to allocate gpus evenly between processes
+    for _ in range(args.num_processes_gradients//torch.cuda.device_count()):
+        for i in [int(j) for j in os.getenv("CUDA_VISIBLE_DEVICES").split(",")]:
+            gpu_queue.put(i)
+
     manager = Manager()
-    completion_times_gradients = manager.list()
+    completion_times_gradients = manager.list() # the processes report back to the main process wich handles web logging
 
     pool_gradients = Pool(args.num_processes_gradients)
-
     
     checkpoint = checkpoints[args.checkpoint_nr]
     
-
     out_path = os.path.join(influence_output_dir, checkpoint.split("-")[-1])
+
     if os.path.isfile(out_path):
         logging.info("Skipping {}, already calculated".format(out_path) )
+        run.delete()
     else:
         logging.info("Getting gradients for checkpoint-{}".format(checkpoint))
-        # specify tasks for subprocesses
+
+        # create tasks for subprocesses
         tasks_gradients = [(checkpoint,i, i + args.gradients_per_file, completion_times_gradients) for i in range(0, len(dataset), args.gradients_per_file)]
         
 
         r = pool_gradients.starmap_async(get_for_checkpoint, tasks_gradients)   
-        while not r.ready(): # to enable logging troughput: loop to not block the main process
-            #print("Tasks still running...", completion_times_gradients)
+
+        # web logging
+        while not r.ready(): # loop to not block the main process
             while len(completion_times_gradients) > 0:
-                logging.info({"gradients/time_per_chunk": completion_times_gradients.pop()})
-           
+                run.log({"gradients/time_per_chunk": completion_times_gradients.pop()},commit=True)
+            time.sleep(10)  
+        
         logging.info("Got gradients for checkpoint-{}".format(checkpoint))
+        pool_gradients.close()
+        pool_gradients.join()

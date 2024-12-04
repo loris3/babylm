@@ -113,3 +113,18 @@ def get_pool_memory_usage(pool):
         except psutil.NoSuchProcess:
             pass
     return memory_usage / (1024 ** 3)
+
+from sklearn.utils import gen_even_slices
+import math
+def batch(lst, batch_size):
+    """Creates a list of lists with an even number of elements close to `batch_size`. Used to evenly divide jobs between processes.
+
+    Args:
+        lst: a list
+        batch_size: the target/maximum batch size
+
+    Yields:
+        a list of lists of even size close to `batch_size` in size
+    """
+    for i in gen_even_slices(len(lst), math.ceil(len(lst)/batch_size)):
+        yield lst[i]

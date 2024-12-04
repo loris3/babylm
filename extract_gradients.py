@@ -24,7 +24,7 @@ from util import DeterministicDataCollatorForLanguageModeling
 from multiprocessing import Pool, Queue, Manager
 
 import math
-from sklearn.utils import gen_even_slices
+
 from transformers import RobertaTokenizerFast
 
 os.environ["TOKENIZERS_PARALLELISM"] = "True"
@@ -132,18 +132,7 @@ def get_for_checkpoint(checkpoint_path, i_start, i_end, completion_times_gradien
 
 
 
-def batch(lst, batch_size):
-    """Creates a list of lists with an even number of elements close to `batch_size`. Used to evenly divide jobs between processes.
 
-    Args:
-        lst: a list
-        batch_size: the target/maximum batch size
-
-    Yields:
-        a list of lists of even size close to `batch_size` in size
-    """
-    for i in gen_even_slices(len(lst), math.ceil(len(lst)/batch_size)):
-        yield lst[i]
         
 def get_all_chunks(checkpoint_path):
     """Returns output paths

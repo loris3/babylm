@@ -6,6 +6,8 @@ from dotenv import load_dotenv
 load_dotenv()
 import wandb
 
+from util import batch 
+
 from functools import partial
 from multiprocessing.pool import ThreadPool
 
@@ -143,12 +145,7 @@ def calc_partial(tasks, subtasks,completion_times_influence, einsum_times_influe
 
 
 
-import math
-from sklearn.utils import gen_even_slices
-def batch(lst, batch_size):
-        for i in gen_even_slices(len(lst), math.ceil(len(lst)/batch_size)):
-            yield lst[i]
-        
+
 def get_all_chunks(checkpoint_path):
     return [ os.path.join(gradient_output_dir, checkpoint_path.split("-")[-1],str(i) + "_" + str(i + args.gradients_per_file)) for i in range(0, len(dataset), args.gradients_per_file)]
     

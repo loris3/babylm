@@ -40,12 +40,12 @@ parser = argparse.ArgumentParser("pretraining")
 parser.add_argument("dataset", help="A dataset on the hf hub. Format: username/name")
 parser.add_argument("curriculum", help="The curriculum to use. Filename in the dataset repo. Examples: curriculum.pt or random.pt")
 parser.add_argument("--per_device_train_batch_size", help="per_device_train_batch_size", type=int, nargs="?", const=1, default=64) # TODO
-# parser.add_argument("--cuda_visible_devices", help="Comma seperated GPU ids to use", nargs="?", const=1, default="0,1")
+parser.add_argument("--cuda_visible_devices", help="Comma seperated GPU ids to use", nargs="?", const=1, default="0,1")
 
 args = parser.parse_args()
 
 
-# os.environ["CUDA_VISIBLE_DEVICES"] = args.cuda_visible_devices
+os.environ["CUDA_VISIBLE_DEVICES"] = args.cuda_visible_devices
 os.environ["WANDB_PROJECT"]="babylm_pretraining"
 
 datasets = load_dataset(args.dataset)

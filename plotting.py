@@ -24,9 +24,10 @@ import datasets
 from datasets import load_dataset
 import util
 from scipy.stats import zscore
+from torch.nn.utils.rnn import pad_sequence
 
 def load_data_for_plotting(dataset_name, curriculum_name, influence_output_dir="./influence"):
-    influence_output_dir = os.path.join(influence_output_dir, os.path.basename(dataset_name))
+    influence_output_dir = os.path.join(influence_output_dir, os.path.basename(dataset_name)+"_"+curriculum_name.split(".")[0])
     dataset = load_dataset(dataset_name)["train"]
     curriculum = util.get_curriculum(dataset_name, curriculum_name)
 
@@ -44,12 +45,14 @@ def load_data_for_plotting(dataset_name, curriculum_name, influence_output_dir="
 
 
 def plot_per_document_in_order(df, curriculum):
+    if isinstance(curriculum, list):
+        curriculum = pad_sequence(curriculum).T
     dff = df[list(df.columns[0:-5])]
 
 
-    out = np.empty((len(df.columns[0:-5]), len(dff)))
+    out = np.empty((len(df.columns[0:-5]), len(curriculum[0])))
     for i in range(0, len(dff.columns)):
-        out[i,:] = dff.iloc[curriculum[i,:].numpy(),i]
+        out[i,:] = dff.iloc[curriculum[i].numpy(),i]
 
 
 
@@ -177,7 +180,8 @@ def plot_per_token_per_stage(df):
     plt.title("Per token ([doc]* tokes_doc)")
 def plot_per_token_in_order(df, curriculum):
     dff = df[list(df.columns[0:-5])+[ "document_lenght"]]
-
+    if isinstance(curriculum, list):
+        curriculum = pad_sequence(curriculum).T
 
 
     out = np.empty((len(df.columns[0:-5]), df["document_lenght"].sum()))

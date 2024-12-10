@@ -34,7 +34,7 @@ from transformers import Trainer, TrainingArguments
 from torch.utils.data import SequentialSampler
 from transformers import GPT2TokenizerFast
 import json
-from transformers import RobertaConfig
+from transformers import RobertaConfig, LlamaConfig
 from tokenizers import (Tokenizer, decoders, models, pre_tokenizers,
                         processors, trainers)
 from tokenizers.normalizers import NFKC
@@ -80,11 +80,12 @@ except:
         tokenizer.post_processor = processors.ByteLevel(trim_offsets=True)
         tokenizer.normalizer = NFKC()
 
-        tokenizer.train_from_iterator(batch_iterator(), vocab_size=52_000, min_frequency=2, special_tokens=[
+        tokenizer.train_from_iterator(batch_iterator(), vocab_size=16000, min_frequency=2, special_tokens=[
             "<s>",
             "<pad>",
             "</s>",
         ])
+        tokenizer.model_max_lenght = 128
         # Save files to disk
         tokenizer.save_model(model_path)
         tokenizer = GPT2TokenizerFast.from_pretrained(model_path, max_len=512)      
@@ -191,7 +192,7 @@ class CurriculumTrainer(Trainer):
             dataloader_params["worker_init_fn"] = seed_worker
             dataloader_params["prefetch_factor"] = self.args.dataloader_prefetch_factor
 
-        return EpochVariableDataLoader(train_dataset, data_collator.set_epoch, **dataloader_params) # the Trainer class calls set_epoch on the dataloader, but we also need it in the data_collator
+        return EpochVariableDataLoader(train_dataset, data_collator.set_epoch if "roberta" in args.model_name else lambda _ : None, **dataloader_params) # the Trainer class calls set_epoch on the dataloader, but we also need it in the data_collator
 
 
 # set up eval 
@@ -251,6 +252,18 @@ roberta_config = RobertaConfig(
     intermediate_size=3072,
 )
 
+# https://github.com/timinar/BabyLlama/blob/main/config/llama-97M-strict.yaml
+llama_config = LlamaConfig(
+        vocab_size=tokenizer.vocab_size,
+        max_position_embeddings=2*tokenizer.model_max_length,
+        hidden_size=768,
+        intermediate_size=2048,
+        num_hidden_layers=12,
+        num_attention_heads=12,
+        tie_word_embeddings=True,
+        pad_token_id=tokenizer.convert_tokens_to_ids("<pad>"),
+    )
+
 EPOCHS = len(util.get_curriculum(args.dataset, args.curriculum)) # note that an epoch is not necesarilly a pass over the entire dataset anymore
 
 
@@ -271,14 +284,14 @@ training_args = TrainingArguments(
     #                                 2048=16*32* 4 GPUS
         per_device_train_batch_size=64,
         gradient_accumulation_steps=16,
-        learning_rate=5e-4, 
+        learning_rate=5e-4 if args.model_type == "roberta" else 7e-4, 
 
         adam_beta1=0.9,
         adam_beta2=0.98,
         adam_epsilon=1e-06,
         weight_decay=0.01,
-        lr_scheduler_type="polynomial",
-        warmup_steps=10000, 
+        lr_scheduler_type="polynomial" if args.model_type == "roberta" else "cosine",
+        warmup_steps=10000 if args.model_type == "roberta" else 300, 
     # eval
         eval_strategy="epoch",
         label_names=["labels"], # of eval_dataset

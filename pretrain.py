@@ -17,7 +17,7 @@ from random import randrange
 import cloudpickle
 from datasets import load_dataset
 import random
-from transformers import RobertaForMaskedLM
+from transformers import RobertaForMaskedLM, DataCollatorForLanguageModeling
 import evaluate
 
 from collections import defaultdict
@@ -32,16 +32,19 @@ from datasets import load_dataset
 from transformers import RobertaTokenizerFast
 from transformers import Trainer, TrainingArguments
 from torch.utils.data import SequentialSampler
+from transformers import GPT2TokenizerFast
 import json
 from transformers import RobertaConfig
-
+from tokenizers import (Tokenizer, decoders, models, pre_tokenizers,
+                        processors, trainers)
+from tokenizers.normalizers import NFKC
 
 parser = argparse.ArgumentParser("pretraining")
 parser.add_argument("dataset", help="A dataset on the hf hub. Format: username/name")
 parser.add_argument("curriculum", help="The curriculum to use. Filename in the dataset repo. Examples: curriculum.pt or random.pt")
 parser.add_argument("--per_device_train_batch_size", help="per_device_train_batch_size", type=int, nargs="?", const=1, default=64) # TODO
 parser.add_argument("--cuda_visible_devices", help="Comma seperated GPU ids to use", nargs="?", const=1, default="0,1")
-
+parser.add_argument("--model_type", help="One of 'roberta', 'llama'", default="roberta")
 args = parser.parse_args()
 
 
@@ -50,7 +53,7 @@ os.environ["WANDB_PROJECT"]="babylm_pretraining"
 
 datasets = load_dataset(args.dataset)
 
-model_path =  os.path.join("models/", args.dataset.split("/")[-1] +"_" +args.curriculum.split(".")[0])
+model_path =  os.path.join("models/", args.dataset.split("/")[-1] + ("_" + args.model_type if args.model_type != "roberta" else "") + "_" +args.curriculum.split(".")[0])
 if not os.path.exists(model_path):
     os.makedirs(model_path)
 
@@ -60,39 +63,61 @@ if not os.path.exists(model_path):
 # Load or create tokenizer
 tokenizer = None
 try:
-    tokenizer = RobertaTokenizerFast.from_pretrained(model_path, max_len=512)
+    if args.model_type == "llama":
+        tokenizer = GPT2TokenizerFast.from_pretrained(model_path, max_len=512)
+    else:
+        tokenizer = RobertaTokenizerFast.from_pretrained(model_path, max_len=512)
 except:
-
-    dataset_tokenizer = datasets["train"]
-    # https://github.com/huggingface/transformers/tree/main/examples/flax/language-modeling#train-tokenizer
-    tokenizer = ByteLevelBPETokenizer()
-
     def batch_iterator(batch_size=1000):
-        for i in range(0, len(dataset_tokenizer), batch_size):
-            yield dataset_tokenizer[i: i + batch_size]["text"]
+            for i in range(0, len(dataset_tokenizer), batch_size):
+                yield dataset_tokenizer[i: i + batch_size]["text"]
+    dataset_tokenizer = datasets["train"]
+    if args.model_type == "llama":
+        # https://github.com/timinar/BabyLlama/blob/main/train.py
+        tokenizer = Tokenizer(models.BPE())
+        tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=True)
+        tokenizer.decoder = decoders.ByteLevel()
+        tokenizer.post_processor = processors.ByteLevel(trim_offsets=True)
+        tokenizer.normalizer = NFKC()
 
-    # Customized training
-    tokenizer.train_from_iterator(batch_iterator(), vocab_size=52_000, min_frequency=2, special_tokens=[
-        "<s>",
-        "<pad>",
-        "</s>",
-        "<unk>",
-        "<mask>",
-    ])
+        tokenizer.train_from_iterator(batch_iterator(), vocab_size=52_000, min_frequency=2, special_tokens=[
+            "<s>",
+            "<pad>",
+            "</s>",
+        ])
+        # Save files to disk
+        tokenizer.save_model(model_path)
+        tokenizer = GPT2TokenizerFast.from_pretrained(model_path, max_len=512)      
+    else:
+        # https://github.com/huggingface/transformers/tree/main/examples/flax/language-modeling#train-tokenizer
+        tokenizer = ByteLevelBPETokenizer()
+        # Customized training
+        tokenizer.train_from_iterator(batch_iterator(), vocab_size=52_000, min_frequency=2, special_tokens=[
+            "<s>",
+            "<pad>",
+            "</s>",
+            "<unk>",
+            "<mask>",
+        ])
 
-    # Save files to disk
-    tokenizer.save_model(model_path)
-    tokenizer = RobertaTokenizerFast.from_pretrained(model_path, max_len=512)
+        # Save files to disk
+        tokenizer.save_model(model_path)
+        tokenizer = RobertaTokenizerFast.from_pretrained(model_path, max_len=512)
 
 # Setup custom data_collator:
 #   we still use dynamic masking (mask differently at each epoch) as in the original RoBERTa paper, but do so deterministically (by setting the torch seed based on a hash of the document and epoch).
 #       this is done to make the influence estimation more realistic
 #   Aside: we do not use sentence packing as that would defeat the purpouse of applying an influence estimation method on a per-document basis
-
-data_collator = util.DeterministicDataCollatorForLanguageModeling(
-    tokenizer=tokenizer, mlm=True, mlm_probability=0.15
-)
-data_collator.set_epoch(0)
+data_collator = None
+if "roberta" in args.model_type:
+    data_collator = util.DeterministicDataCollatorForLanguageModeling(
+        tokenizer=tokenizer, mlm=True, mlm_probability=0.15
+    )
+    data_collator.set_epoch(0)
+else:
+    data_collator = DataCollatorForLanguageModeling(
+        tokenizer=tokenizer, mlm=False
+    )
 
 #   we need to change some classes so that they pass down the current epoch to this datacollator, as well as to the dataloader:
 

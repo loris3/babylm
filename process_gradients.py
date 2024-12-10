@@ -26,7 +26,7 @@ import json
 
 from datasets import load_dataset
 import datasets
-model_name = args.dataset.split("/")[-1]
+model_name = args.model.split("/")[-1]
 # create output dirs
 
 

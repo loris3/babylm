@@ -8,8 +8,11 @@ def get_curriculum(repo_id , filename):
 
 def get_epoch_checkpoints(model_dir):
     checkpoint_ids = sorted([int(str(x).split("-")[-1]) for x in Path(model_dir).glob("checkpoint-*")])
-
-    return [os.path.join(model_dir,"checkpoint-{}".format(c)) for c in checkpoint_ids]
+    l = [os.path.join(model_dir,"checkpoint-{}".format(c)) for c in checkpoint_ids]
+    if "equitoken" in model_dir:
+        return l[(len(l)//10)-1::len(l)//10]
+    else:
+        return l
 
 from huggingface_hub import snapshot_download
 

@@ -244,7 +244,7 @@ training_args = TrainingArguments(
     # https://github.com/facebookresearch/fairseq/blob/main/examples/roberta/README.pretraining.md
     # for an effective batch size of  2048=16*64* 2 GPUS:
     #                                 2048=16*32* 4 GPUS
-        per_device_train_batch_size=64,
+        per_device_train_batch_size=32,
         gradient_accumulation_steps=16,
         learning_rate=5e-4, 
 
@@ -258,7 +258,7 @@ training_args = TrainingArguments(
         eval_strategy="epoch",
         label_names=["labels"], # of eval_dataset
         batch_eval_metrics=True,
-        per_device_eval_batch_size=8,
+        per_device_eval_batch_size=32,
         eval_on_start = True,
 
     # logging

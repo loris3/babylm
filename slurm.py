@@ -31,10 +31,10 @@ def main():
 
         # add dependency if more than n gradient extraction scripts are scheduled 
         if len(prev_job_ids_gradients) == args.max_concurrent_gradient_extraction_scripts:
-            dependency = f"--dependency=afterany:{prev_job_ids_gradients[0]}"
+            dependency = f"--dependency=afterok:4291,afterany:{prev_job_ids_gradients[0]}"
             prev_job_ids_gradients = prev_job_ids_gradients[1:]
         else:
-            dependency = ""
+            dependency = "--dependency=afterok:4291"
 
         # gradient extraction
         extract_command = [
@@ -69,7 +69,8 @@ def main():
       
         influence_command = [
             "sbatch",
-            f"--job-name=influence computation for checkpoint {i} --nice=10",
+            "--nice=10",
+            f"--job-name=influence computation for checkpoint {i} ",
             dependency,
             "./slurm_process_gradients.sh",
             args.model,

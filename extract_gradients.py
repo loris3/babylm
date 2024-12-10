@@ -39,7 +39,7 @@ parser.add_argument("--gradients_per_file", help="Number of gradients per output
 args = parser.parse_args()
 
 
-model_name = args.dataset.split("/")[-1]
+model_name = args.model.split("/")[-1]
 
 
 # create output dirs

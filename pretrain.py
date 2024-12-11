@@ -17,7 +17,7 @@ from random import randrange
 import cloudpickle
 from datasets import load_dataset
 import random
-from transformers import RobertaForMaskedLM, DataCollatorForLanguageModeling
+from transformers import RobertaForMaskedLM, DataCollatorForLanguageModeling, LlamaForCausalLM, LlamaTokenizerFast
 import evaluate
 
 from collections import defaultdict
@@ -65,6 +65,10 @@ tokenizer = None
 try:
     if args.model_type == "llama":
         tokenizer = GPT2TokenizerFast.from_pretrained(model_path, max_len=512)
+        tokenizer.model_max_length = 128
+        tokenizer.bos_token = "<s>"
+        tokenizer.eos_token = "</s>"
+        tokenizer.pad_token = "<pad>"
     else:
         tokenizer = RobertaTokenizerFast.from_pretrained(model_path, max_len=512)
 except:
@@ -74,10 +78,10 @@ except:
     dataset_tokenizer = datasets["train"]
     if args.model_type == "llama":
         # https://github.com/timinar/BabyLlama/blob/main/train.py
-        tokenizer = Tokenizer(models.BPE())
-        tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=True)
-        tokenizer.decoder = decoders.ByteLevel()
-        tokenizer.post_processor = processors.ByteLevel(trim_offsets=True)
+        tokenizer = ByteLevelBPETokenizer(add_prefix_space=True,trim_offsets=True)
+        # tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=True)
+        # tokenizer.decoder = decoders.ByteLevel()
+        # tokenizer.post_processor = processors.ByteLevel(trim_offsets=True)
         tokenizer.normalizer = NFKC()
 
         tokenizer.train_from_iterator(batch_iterator(), vocab_size=16000, min_frequency=2, special_tokens=[
@@ -85,10 +89,14 @@ except:
             "<pad>",
             "</s>",
         ])
-        tokenizer.model_max_lenght = 128
+
         # Save files to disk
         tokenizer.save_model(model_path)
-        tokenizer = GPT2TokenizerFast.from_pretrained(model_path, max_len=512)      
+        tokenizer = GPT2TokenizerFast.from_pretrained(model_path, max_len=512)
+        tokenizer.model_max_length = 128
+        tokenizer.bos_token = "<s>"
+        tokenizer.eos_token = "</s>"
+        tokenizer.pad_token = "<pad>"      
     else:
         # https://github.com/huggingface/transformers/tree/main/examples/flax/language-modeling#train-tokenizer
         tokenizer = ByteLevelBPETokenizer()
@@ -165,8 +173,6 @@ dataset_eval.set_format("torch")
 
 
 
-
-
 class CurriculumTrainer(Trainer):
     def get_train_dataloader(self) -> DataLoader:
         """
@@ -192,7 +198,7 @@ class CurriculumTrainer(Trainer):
             dataloader_params["worker_init_fn"] = seed_worker
             dataloader_params["prefetch_factor"] = self.args.dataloader_prefetch_factor
 
-        return EpochVariableDataLoader(train_dataset, data_collator.set_epoch if "roberta" in args.model_name else lambda _ : None, **dataloader_params) # the Trainer class calls set_epoch on the dataloader, but we also need it in the data_collator
+        return EpochVariableDataLoader(train_dataset, data_collator.set_epoch if args.model_type == "roberta" else lambda _:None , **dataloader_params) # the Trainer class calls set_epoch on the dataloader, but we also need it in the data_collator
 
 
 # set up eval 
@@ -297,7 +303,7 @@ training_args = TrainingArguments(
         label_names=["labels"], # of eval_dataset
         batch_eval_metrics=True,
         per_device_eval_batch_size=32,
-        eval_on_start = True,
+        eval_on_start = False,
 
     # logging
         report_to="wandb", 
@@ -306,8 +312,11 @@ training_args = TrainingArguments(
     # debug
         use_cpu=False,
 )
-
-model = RobertaForMaskedLM(config=roberta_config)
+model = None
+if "roberta" == args.model_type:
+    model = RobertaForMaskedLM(config=roberta_config)
+else:
+    model = LlamaForCausalLM(llama_config)
 trainer = CurriculumTrainer(
     model=model,
     args=training_args,

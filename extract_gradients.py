@@ -25,7 +25,7 @@ from multiprocessing import Pool, Queue, Manager
 
 import math
 
-from transformers import RobertaTokenizerFast
+from transformers import RobertaTokenizerFast,GPT2TokenizerFast, DataCollatorForLanguageModeling,LlamaForCausalLM
 
 os.environ["TOKENIZERS_PARALLELISM"] = "True"
 
@@ -99,8 +99,8 @@ def get_for_checkpoint(checkpoint_path, i_start, i_end, completion_times_gradien
         e: Any error but most likely OOM
     """                         
 
-
-    data_collator.set_epoch(util.get_epoch(checkpoint_path)) # to ensure the same masking as during training
+    if not "llama" in args.model:
+        data_collator.set_epoch(util.get_epoch(checkpoint_path)) # to ensure the same masking as during training
     try:
         gpu_id = gpu_queue.get()
         out_dir = os.path.join(gradient_output_dir, checkpoint_path.split("-")[-1])
@@ -114,7 +114,11 @@ def get_for_checkpoint(checkpoint_path, i_start, i_end, completion_times_gradien
 
         device = "cuda:" + str(gpu_id)
         model_config = AutoConfig.from_pretrained(checkpoint_path)
-        model = RobertaForMaskedLM(config=model_config).to(device)
+        model = None
+        if "llama" in args.model:
+            model = LlamaForCausalLM(config=model_config).to(device)
+        else:
+            model = RobertaForMaskedLM(config=model_config).to(device)
         model.train()
 
         start_time = time.time()
@@ -150,15 +154,24 @@ def get_all_chunks(checkpoint_path):
 
 dataset = load_dataset(args.dataset)["train"]
 dataset.set_transform(lambda x : tokenizer(x["text"], return_special_tokens_mask=True, truncation=True, padding="max_length", max_length=512))
-tokenizer = RobertaTokenizerFast.from_pretrained(args.model, max_len=512)
+tokenizer = None
+data_collator = None
+if not "llama" in args.model:
+    tokenizer = RobertaTokenizerFast.from_pretrained(args.model, max_len=512)
+    data_collator = DeterministicDataCollatorForLanguageModeling(
+    tokenizer=tokenizer, mlm=True, mlm_probability=0.15
+)
+else: 
+    tokenizer = GPT2TokenizerFast.from_pretrained(model_path, max_len=512)
+    data_collator = DataCollatorForLanguageModeling(
+    tokenizer=tokenizer, mlm=False
+)
 
 
 
 checkpoints =  get_checkpoints_hub(args.model)
 
-data_collator = DeterministicDataCollatorForLanguageModeling(
-    tokenizer=tokenizer, mlm=True, mlm_probability=0.15
-)
+
 
 gpu_queue = Queue()
 

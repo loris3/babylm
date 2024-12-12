@@ -299,11 +299,12 @@ training_args = TrainingArguments(
         lr_scheduler_type="polynomial" if args.model_type == "roberta" else "cosine",
         warmup_steps=10000 if args.model_type == "roberta" else 300, 
     # eval
-        eval_strategy="epoch",
+        eval_strategy="epoch" if EPOCHS <=10 else "steps",
+        eval_steps=None if EPOCHS <=10 else 0.1,
         label_names=["labels"], # of eval_dataset
         batch_eval_metrics=True,
         per_device_eval_batch_size=32,
-        eval_on_start = False,
+        eval_on_start = True,
 
     # logging
         report_to="wandb", 

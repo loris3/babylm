@@ -149,11 +149,6 @@ def get_all_chunks(checkpoint_path):
     """
     return [ os.path.join(gradient_output_dir, checkpoint_path.split("-")[-1],str(i) + "_" + str(i + args.gradients_per_file)) for i in range(0, len(dataset), args.gradients_per_file)]
     
-
-
-
-dataset = load_dataset(args.dataset)["train"]
-dataset.set_transform(lambda x : tokenizer(x["text"], return_special_tokens_mask=True, truncation=True, padding="max_length", max_length=512))
 tokenizer = None
 data_collator = None
 if not "llama" in args.model:
@@ -162,10 +157,15 @@ if not "llama" in args.model:
     tokenizer=tokenizer, mlm=True, mlm_probability=0.15
 )
 else: 
-    tokenizer = GPT2TokenizerFast.from_pretrained(model_path, max_len=512)
+    tokenizer = GPT2TokenizerFast.from_pretrained(args.model, max_len=512)
     data_collator = DataCollatorForLanguageModeling(
     tokenizer=tokenizer, mlm=False
 )
+
+
+
+dataset = load_dataset(args.dataset)["train"]
+dataset.set_transform(lambda x : tokenizer(x["text"], return_special_tokens_mask=True, truncation=True, padding="max_length", max_length=512))
 
 
 

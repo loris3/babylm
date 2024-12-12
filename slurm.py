@@ -31,10 +31,10 @@ def main():
 
         # add dependency if more than n gradient extraction scripts are scheduled 
         if len(prev_job_ids_gradients) == args.max_concurrent_gradient_extraction_scripts:
-            dependency = f"--dependency=afterok:4291,afterany:{prev_job_ids_gradients[0]}"
+            dependency = f"--dependency=afterany:{prev_job_ids_gradients[0]}"
             prev_job_ids_gradients = prev_job_ids_gradients[1:]
         else:
-            dependency = "--dependency=afterok:4291"
+            dependency = ""
 
         # gradient extraction
         extract_command = [

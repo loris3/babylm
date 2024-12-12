@@ -1,4 +1,4 @@
-name: bayblm
+name: babylm_venv
 channels:
   - conda-forge
 dependencies:
@@ -233,7 +233,7 @@ dependencies:
       - pypng==0.20220715.0
       - python-dateutil==2.9.0.post0
       - python-dotenv==1.0.1
-      - python-graphviz==0.8.4
+
       - python-json-logger==2.0.7
       - pytz==2024.2
       - pyyaml==6.0.2
@@ -321,4 +321,3 @@ dependencies:
       - xxhash==3.5.0
       - yarl==1.17.1
       - zipp==3.21.0
-prefix: /data/loriss21dm/miniforge3/envs/bayblm

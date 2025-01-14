@@ -13,7 +13,7 @@ MODEL_BASENAME=$(basename $MODEL_PATH)
 python -m lm_eval --model hf-mlm \
     --model_args pretrained=$MODEL_PATH,backend="mlm" \
     --tasks blimp_filtered,blimp_supplement \
-    --device cuda:0 \
+    --device cuda:2 \
     --batch_size 1 \
     --log_samples \
     --output_path ${RESULTS_DIR_PATH}/blimp/${MODEL_BASENAME}/blimp_results.json
@@ -25,8 +25,8 @@ python -m lm_eval --model hf-mlm \
 python -m lm_eval --model hf-mlm \
     --model_args pretrained=$MODEL_PATH,backend="mlm" \
     --tasks ewok_filtered \
-    --device cuda:0 \
-    --batch_size 128 \
+    --device cuda:2\
+    --batch_size 1 \
     --log_samples \
     --output_path ${RESULTS_DIR_PATH}/ewok/${MODEL_BASENAME}/ewok_results.json
 

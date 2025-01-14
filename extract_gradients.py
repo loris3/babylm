@@ -26,6 +26,8 @@ from multiprocessing import Pool, Queue, Manager
 import math
 
 from transformers import RobertaTokenizerFast,GPT2TokenizerFast, DataCollatorForLanguageModeling,LlamaForCausalLM
+from transformers import AutoModelForCausalLM, AutoTokenizer
+ 
 
 os.environ["TOKENIZERS_PARALLELISM"] = "True"
 
@@ -83,8 +85,9 @@ def get_loss_gradient(model, example,device):
         )
     loss = outputs.loss
     loss.retain_grad()
-    return  torch.autograd.grad(loss, inputs_embeds, retain_graph=False)[0].squeeze()
-
+    return torch.autograd.grad(loss, inputs_embeds, retain_graph=False)[0].squeeze()
+    
+   
 
 
 def get_for_checkpoint(checkpoint_path, i_start, i_end, completion_times_gradients):
@@ -98,8 +101,8 @@ def get_for_checkpoint(checkpoint_path, i_start, i_end, completion_times_gradien
     Raises:
         e: Any error but most likely OOM
     """                         
-
-    if not "llama" in args.model:
+    
+    if not any([a in args.model for a in ["llama", "OLMo"]]):
         data_collator.set_epoch(util.get_epoch(checkpoint_path)) # to ensure the same masking as during training
     try:
         gpu_id = gpu_queue.get()
@@ -113,11 +116,17 @@ def get_for_checkpoint(checkpoint_path, i_start, i_end, completion_times_gradien
 
 
         device = "cuda:" + str(gpu_id)
-        model_config = AutoConfig.from_pretrained(checkpoint_path)
+        
         model = None
         if "llama" in args.model:
-            model = LlamaForCausalLM(config=model_config).to(device)
+            model_config = AutoConfig.from_pretrained(checkpoint_path)
+            model = LlamaForCausalLM(config=model_config,trust_remote_code=True).to(device)
+        elif "OLMo" in args.model:
+            print("loading model", flush=True)
+            model = AutoModelForCausalLM.from_pretrained(args.model, revision=checkpoint_path).to(device)
+            print("model laoded", flush=True)
         else:
+            model_config = AutoConfig.from_pretrained(checkpoint_path)
             model = RobertaForMaskedLM(config=model_config).to(device)
         model.train()
 
@@ -138,29 +147,36 @@ def get_for_checkpoint(checkpoint_path, i_start, i_end, completion_times_gradien
 
 
         
-def get_all_chunks(checkpoint_path):
-    """Returns output paths
+# def get_all_chunks(checkpoint_path):
+#     """Returns output paths
 
-    Args:
-        checkpoint_path: A path to a model checkpoint
+#     Args:
+#         checkpoint_path: A path to a model checkpoint
 
-    Returns:
-        A list of paths to the individual chunks generated
-    """
-    return [ os.path.join(gradient_output_dir, checkpoint_path.split("-")[-1],str(i) + "_" + str(i + args.gradients_per_file)) for i in range(0, len(dataset), args.gradients_per_file)]
+#     Returns:
+#         A list of paths to the individual chunks generated
+#     """
+#     return [ os.path.join(gradient_output_dir, checkpoint_path.split("-")[-1],str(i) + "_" + str(i + args.gradients_per_file)) for i in range(0, len(dataset), args.gradients_per_file)]
     
 tokenizer = None
 data_collator = None
-if not "llama" in args.model:
-    tokenizer = RobertaTokenizerFast.from_pretrained(args.model, max_len=512)
-    data_collator = DeterministicDataCollatorForLanguageModeling(
-    tokenizer=tokenizer, mlm=True, mlm_probability=0.15
-)
-else: 
+if "llama" in args.model:
     tokenizer = GPT2TokenizerFast.from_pretrained(args.model, max_len=512)
     data_collator = DataCollatorForLanguageModeling(
     tokenizer=tokenizer, mlm=False
 )
+
+elif "OLMo" in args.model:
+    tokenizer = AutoTokenizer.from_pretrained(args.model,trust_remote_code=True)
+    data_collator = DataCollatorForLanguageModeling(
+    tokenizer=tokenizer, mlm=False
+)
+else:
+    tokenizer = RobertaTokenizerFast.from_pretrained(args.model, max_len=512)
+    data_collator = DeterministicDataCollatorForLanguageModeling(
+    tokenizer=tokenizer, mlm=True, mlm_probability=0.15
+) 
+
 
 
 
@@ -179,11 +195,13 @@ gpu_queue = Queue()
 
 if __name__ == '__main__':
     
-
+    assert args.num_processes_gradients//torch.cuda.device_count() > 0, "Need to assign at least as many processes as GPUs (change num_processes_gradients!)"
     # set up gpu queue to allocate gpus evenly between processes
     for _ in range(args.num_processes_gradients//torch.cuda.device_count()):
-        for i in [int(j) for j in os.getenv("CUDA_VISIBLE_DEVICES").split(",")]:
+
+        for i in range(0,torch.cuda.device_count()):
             gpu_queue.put(i)
+       
 
     manager = Manager()
     completion_times_gradients = manager.list() # the processes report back to the main process wich handles web logging
@@ -193,18 +211,17 @@ if __name__ == '__main__':
     checkpoint = checkpoints[args.checkpoint_nr]
     
     out_path = os.path.join(influence_output_dir, checkpoint.split("-")[-1])
-
+   
     if os.path.isfile(out_path):
         logging.info("Skipping {}, already calculated".format(out_path) )
     else:
+      
         run = wandb.init(project="babylm_gradient_extraction")
         run.name = os.path.join(args.model, os.getenv("SLURM_JOB_NAME", "?"))
         logging.info("Getting gradients for checkpoint-{}".format(checkpoint))
 
         # create tasks for subprocesses
         tasks_gradients = [(checkpoint,i, i + args.gradients_per_file, completion_times_gradients) for i in range(0, len(dataset), args.gradients_per_file)]
-        
-
         r = pool_gradients.starmap_async(get_for_checkpoint, tasks_gradients)   
 
         # web logging

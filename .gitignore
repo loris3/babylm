@@ -20,3 +20,12 @@ gradients/
 influence/
 old_logs
 babylm_data_preprocessing
+.conda
+difficulty/*
+difficulty_ngram/*
+difficulty_metrics/*
+launch.json
+stream.py
+get_olmo_checkpoints.ipynb
+babylm_data_preprocessing
+babylm

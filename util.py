@@ -16,9 +16,31 @@ def get_epoch_checkpoints(model_dir):
 
 from huggingface_hub import snapshot_download
 
+from huggingface_hub import list_repo_refs
+
+def get_checkpoints_olmo(model_name="allenai/OLMo-2-1124-7B"):
+
+    
+    out = list_repo_refs(model_name)
+    branches = [b.name for b in out.branches]
+    checkpoints_stage_1 = [[branch] + branch.split("-") for branch in branches if branch != "main" and "stage1" in branch]
+    checkpoints_stage_1 = [sublist[:2] + ["-"] + sublist[2:] for sublist in checkpoints_stage_1]
+    checkpoints_stage_1 = sorted(checkpoints_stage_1, key=lambda checkpoint: int(checkpoint[3].replace("step","")))
+
+    checkpoints_stage_2 = [[branch] + branch.split("-") for branch in branches if branch != "main" and "stage2" in branch]
+    checkpoints_stage_2 = sorted(checkpoints_stage_2, key=lambda checkpoint: (int(checkpoint[2].replace("ingredient","")), int(checkpoint[3].replace("step",""))))
+
+    checkpoints = checkpoints_stage_1 + checkpoints_stage_2 + [["main", "-", "-","-","-"]]
+    checkpoint_names, _,_,_,_ = zip(*checkpoints)
+    return checkpoint_names
+
 def get_checkpoints_hub(model):
-    local_dir = snapshot_download(repo_id=model, allow_patterns=["checkpoints/*"])
-    return [os.path.join(local_dir,"checkpoints", f) for f in os.listdir(os.path.join(local_dir, "checkpoints"))]
+
+    if not "OLMo" in model: # these models are pre-trained from scratch (checkpoints are stored in hf repo)
+        local_dir = snapshot_download(repo_id=model, allow_patterns=["checkpoints/*"])
+        return [os.path.join(local_dir,"checkpoints", f) for f in os.listdir(os.path.join(local_dir, "checkpoints"))]
+    else:
+        return get_checkpoints_olmo(model)
 
 
 # def get_all_chunks(checkpoint_path,gradient_input_dir, gradients_per_file):

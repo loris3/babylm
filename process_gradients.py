@@ -71,8 +71,20 @@ from tqdm import tqdm
 import time
 
 import datasets
-dataset = load_dataset(args.dataset)["train"]
-dataset.set_transform(lambda x : tokenizer(x["text"], return_special_tokens_mask=True, truncation=True, padding="max_length", max_length=512))
+
+from util import tokenize_tulu_dataset
+
+
+# TODO we only need to know the lenght of the dataset here
+dataset = None
+if "tulu" in args.dataset:
+    dataset = tokenize_tulu_dataset(args.dataset)
+else:
+    dataset = load_dataset(args.dataset)["train"] 
+    dataset.set_transform(lambda x : tokenizer(x["text"], return_special_tokens_mask=True, truncation=True, padding="max_length", max_length=512))
+
+
+
 import util
 
 
@@ -147,7 +159,7 @@ def calc_partial(tasks, subtasks,completion_times_influence, einsum_times_influe
 
 
 def get_all_chunks(checkpoint_path):
-    return [ os.path.join(gradient_output_dir, checkpoint_path.split("-")[-1],str(i) + "_" + str(i + args.gradients_per_file)) for i in range(0, len(dataset), args.gradients_per_file)]
+    return [ os.path.join(gradient_output_dir, os.path.basename(checkpoint_path),str(i) + "_" + str(i + args.gradients_per_file)) for i in range(0, len(dataset), args.gradients_per_file)]
     
     return [str(x) for x in Path(checkpoint_path).glob("*")]
 
@@ -177,9 +189,6 @@ checkpoints =  get_checkpoints_hub(args.model)
 
 from util import DeterministicDataCollatorForLanguageModeling
 
-data_collator = DeterministicDataCollatorForLanguageModeling(
-    tokenizer=tokenizer, mlm=True, mlm_probability=0.15
-)
 
 
 
@@ -209,26 +218,7 @@ if __name__ == '__main__':
     gradient_output_dir_local = os.path.join("/tmp/gradients", model_name)
     path_remote = os.path.join(gradient_output_dir, checkpoint.split("-")[-1])
     path_local = os.path.join(gradient_output_dir_local, checkpoint.split("-")[-1])
-
-    ##########################
-    # if not os.path.exists(path_local):
-    #     os.makedirs(path_local)
-
-
-    # def copy_tp(src, dst=path_local):
-    #     dest_file = os.path.join(dst, os.path.basename(src))
-    #     if not os.path.exists(dest_file):
-    #         shutil.copy(src, dest_file)
-    
-    # files = glob.glob(os.path.join(path_remote, '*'))
-    # print("copy", path_remote, path_local,files)
-    # with ThreadPool(20) as p:
-    #     p.map(copy_tp, files)
-    # print("copied", flush=True)
-
-    # gradient_output_dir = gradient_output_dir_local
-
-    ###############
+   ###############
     print(sum(os.path.isdir(os.path.join(gradient_output_dir, item)) for item in os.listdir(gradient_output_dir)), "gradient folders waiting", flush=True)
     out_path = os.path.join(influence_output_dir, checkpoint.split("-")[-1])
     if os.path.isfile(out_path):

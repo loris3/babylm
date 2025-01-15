@@ -35,7 +35,7 @@ parser = argparse.ArgumentParser("gradient_extraction")
 parser.add_argument("model", help="A model on the hf hub. Format: username/name_curriculum")
 parser.add_argument("dataset", help="A dataset on the hf hub. Format: username/name")
 parser.add_argument("checkpoint_nr", help="Id of the checkpoint to extract gradients for (starting at 0)",type=int)
-parser.add_argument("--num_processes_gradients", help="Number of processes to use when obtaining gradients (one model per process)", type=int, nargs="?", const=1, default=8) # 12 w 4 gpus -> 3 models per gpu
+parser.add_argument("--num_processes_gradients", help="Number of processes to use when obtaining gradients (one model per process)", type=int, nargs="?", const=1, default=2) # 12 w 4 gpus -> 3 models per gpu
 parser.add_argument("--gradients_per_file", help="Number of gradients per output file", type=int, nargs="?", const=1, default=10000) # ~7.4 GB per file for BERT
 
 args = parser.parse_args()
@@ -106,8 +106,8 @@ def get_for_checkpoint(checkpoint_path, i_start, i_end, completion_times_gradien
         data_collator.set_epoch(util.get_epoch(checkpoint_path)) # to ensure the same masking as during training
     try:
         gpu_id = gpu_queue.get()
-        out_dir = os.path.join(gradient_output_dir, checkpoint_path.split("-")[-1])
-        out_path = os.path.join(gradient_output_dir, checkpoint_path.split("-")[-1],str(i_start) + "_" + str(i_end))
+        out_dir = os.path.join(gradient_output_dir, os.path.basename(checkpoint_path))
+        out_path = os.path.join(gradient_output_dir, os.path.basename(checkpoint_path),str(i_start) + "_" + str(i_end))
         os.makedirs(out_dir,exist_ok=True)
         if os.path.isfile(out_path):
             gpu_queue.put(gpu_id)
@@ -123,7 +123,7 @@ def get_for_checkpoint(checkpoint_path, i_start, i_end, completion_times_gradien
             model = LlamaForCausalLM(config=model_config,trust_remote_code=True).to(device)
         elif "OLMo" in args.model:
             print("loading model", flush=True)
-            model = AutoModelForCausalLM.from_pretrained(args.model, revision=checkpoint_path).to(device)
+            model = AutoModelForCausalLM.from_pretrained(args.model, revision=checkpoint_path, torch_dtype=torch.float16).to(device)
             print("model laoded", flush=True)
         else:
             model_config = AutoConfig.from_pretrained(checkpoint_path)
@@ -178,10 +178,15 @@ else:
 ) 
 
 
+from util import tokenize_tulu_dataset
 
+dataset = None
 
-dataset = load_dataset(args.dataset)["train"]
-dataset.set_transform(lambda x : tokenizer(x["text"], return_special_tokens_mask=True, truncation=True, padding="max_length", max_length=512))
+if "tulu" in args.dataset:
+    dataset = tokenize_tulu_dataset(args.dataset)
+else:
+    dataset = load_dataset(args.dataset)["train"] 
+    dataset.set_transform(lambda x : tokenizer(x["text"], return_special_tokens_mask=True, truncation=True, padding="max_length", max_length=512))
 
 
 
@@ -210,7 +215,7 @@ if __name__ == '__main__':
     
     checkpoint = checkpoints[args.checkpoint_nr]
     
-    out_path = os.path.join(influence_output_dir, checkpoint.split("-")[-1])
+    out_path = os.path.join(influence_output_dir, os.path.basename(checkpoint))
    
     if os.path.isfile(out_path):
         logging.info("Skipping {}, already calculated".format(out_path) )

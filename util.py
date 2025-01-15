@@ -153,3 +153,62 @@ def batch(lst, batch_size):
     """
     for i in gen_even_slices(len(lst), math.ceil(len(lst)/batch_size)):
         yield lst[i]
+
+
+from functools import partial
+from datasets import load_dataset
+from transformers import AutoTokenizer
+
+def tokenize_tulu_dataset(tulu_dataset_name):
+    assert "tulu" in tulu_dataset_name, "Check dataset name. Example: allenai/tulu-v2-sft-mixture"
+
+    dataset = load_dataset(tulu_dataset_name, split="train[:1%]")
+
+    tokenizer = AutoTokenizer.from_pretrained("allenai/OLMo-2-1124-7B")
+
+    dataset = dataset.map(
+        partial(preprocess_tulu, tokenizer=tokenizer, max_seq_len=4096),
+        batched=False,
+        remove_columns=["dataset", "id"],
+        num_proc=20
+    )
+
+    dataset = dataset.filter(lambda example: example["n_labels"] > 0, batched=False, num_proc=20)
+    return dataset
+
+def preprocess_tulu(example, tokenizer, max_seq_len: int):
+    """This is code to prepare the tulu datasets based on the one in the OLMo repo https://github.com/allenai/OLMo/blob/main/scripts/prepare_tulu_data.py
+    """
+    input_ids = [tokenizer.eos_token_id]
+    label_mask = [False]
+
+    for msg in example["messages"]:
+        role_tokens = tokenizer.encode(f"<|{msg['role']}|>\n", add_special_tokens=False)
+        label_mask += [False] * len(role_tokens)
+        input_ids += role_tokens
+
+        if msg["role"] == "assistant":
+            content_tokens = tokenizer.encode(
+                msg["content"].strip() + tokenizer.eos_token + "\n", add_special_tokens=False
+            )
+            label_mask += [True] * len(content_tokens)
+            # mask out the last '\n'
+            assert content_tokens[-2] == tokenizer.eos_token_id
+            label_mask[-1] = False
+        else:
+            content_tokens = tokenizer.encode(msg["content"].strip() + "\n", add_special_tokens=False)
+            label_mask += [False] * len(content_tokens)
+        input_ids += content_tokens
+    input_ids = input_ids[:max_seq_len]
+    label_mask = label_mask[:max_seq_len]
+
+    if len(input_ids) < max_seq_len:
+        pad_len = max_seq_len - len(input_ids)
+        input_ids += [tokenizer.pad_token_id] * pad_len
+        label_mask += [False] * pad_len
+
+    assert len(input_ids) == len(label_mask)
+    n_labels = sum(label_mask)
+
+    return {"input_ids": input_ids, "label_mask": label_mask, "n_labels": n_labels}
+

@@ -34,6 +34,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "True"
 parser = argparse.ArgumentParser("gradient_extraction")
 parser.add_argument("model", help="A model on the hf hub. Format: username/name_curriculum")
 parser.add_argument("dataset", help="A dataset on the hf hub. Format: username/name")
+parser.add_argument("--dataset_split", help="The split to access", default="train[:1%]")
 parser.add_argument("checkpoint_nr", help="Id of the checkpoint to extract gradients for (starting at 0)",type=int)
 parser.add_argument("--num_processes_gradients", help="Number of processes to use when obtaining gradients (one model per process)", type=int, nargs="?", const=1, default=2) # 12 w 4 gpus -> 3 models per gpu
 parser.add_argument("--gradients_per_file", help="Number of gradients per output file", type=int, nargs="?", const=1, default=10000) # ~7.4 GB per file for BERT
@@ -42,15 +43,16 @@ args = parser.parse_args()
 
 
 model_name = args.model.split("/")[-1]
-
+dataset_name = args.dataset.split("/")[-1]
+dataset_split_name = args.dataset_split
 
 # create output dirs
-gradient_output_dir = os.path.join("./gradients", model_name)
+gradient_output_dir = os.path.join("./gradients", model_name, dataset_name, dataset_split_name)
 if not os.path.exists(gradient_output_dir):
     os.makedirs(gradient_output_dir)
-influence_output_dir = os.path.join("./influence", model_name) # this script skips computing existing results
-if not os.path.exists(influence_output_dir):
-    os.makedirs(influence_output_dir)
+# influence_output_dir = os.path.join("./influence", model_name, dataset_name, dataset_split_name) # this script skips computing existing results
+# if not os.path.exists(influence_output_dir):
+#     os.makedirs(influence_output_dir)
 
 
 
@@ -183,9 +185,9 @@ from util import tokenize_tulu_dataset
 dataset = None
 
 if "tulu" in args.dataset:
-    dataset = tokenize_tulu_dataset(args.dataset)
+    dataset = tokenize_tulu_dataset(args.dataset, args.dataset_split)
 else:
-    dataset = load_dataset(args.dataset)["train"] 
+    dataset = load_dataset(args.dataset)[args.dataset_split] 
     dataset.set_transform(lambda x : tokenizer(x["text"], return_special_tokens_mask=True, truncation=True, padding="max_length", max_length=512))
 
 
@@ -215,7 +217,7 @@ if __name__ == '__main__':
     
     checkpoint = checkpoints[args.checkpoint_nr]
     
-    out_path = os.path.join(influence_output_dir, os.path.basename(checkpoint))
+    out_path = os.path.join(gradient_output_dir, os.path.basename(checkpoint))
    
     if os.path.isfile(out_path):
         logging.info("Skipping {}, already calculated".format(out_path) )

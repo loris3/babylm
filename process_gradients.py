@@ -15,47 +15,47 @@ from multiprocessing.pool import ThreadPool
 parser = argparse.ArgumentParser("gradient_extraction")
 
 parser.add_argument("model", help="A model on the hf hub. Format: username/name_curriculum")
-parser.add_argument("dataset", help="A dataset on the hf hub. Format: username/name")
+parser.add_argument("dataset_train", help="A dataset on the hf hub. Format: username/name")
+parser.add_argument("--dataset_train_split", help="The split to access", default="train[:1%]")
 parser.add_argument("checkpoint_nr", help="Id of the checkpoint to extract gradients for (starting at 0)",type=int)
 parser.add_argument("--num_processes", help="Number of processes to use when doing dot product (runs on cpu)", type=int, nargs="?", const=1, default=1)
-# parser.add_argument("--cuda_visible_devices", help="Comma seperated GPU ids to use", nargs="?", const=1, default="0,1")
 parser.add_argument("--gradients_per_file", help="Number of gradients per output file", type=int, nargs="?", const=1, default=10000)
 parser.add_argument("--batch_size", help="How many chunks each subprocess will keep in memory", type=int, nargs="?", const=1, default=108)
 
+parser.add_argument("--dataset_test", help="A dataset on the hf hub. If supplied, returns one score per test instance. Format: username/name", default=None)
+parser.add_argument("--dataset_test_split", help="The split to access", default="test")
 args = parser.parse_args()
 
 import json
 
 from datasets import load_dataset
-import datasets
+
 model_name = args.model.split("/")[-1]
-# create output dirs
+dataset_train_name = args.dataset_train.split("/")[-1]
+dataset_train_split_name = args.dataset_train_split
+dataset_test_name = args.dataset_train.split("/")[-1]
+dataset_test_split_name = args.dataset_test_split
 
 
+gradient_output_dir_train = os.path.join("./gradients", model_name, dataset_train_name, dataset_train_split_name)
+gradient_output_dir_test = os.path.join("./gradients", model_name, dataset_test_name, dataset_test_split_name)
 
-gradient_output_dir = os.path.join("./gradients", model_name)
-if not os.path.exists(gradient_output_dir):
-    os.makedirs(gradient_output_dir)
 
 if not os.path.exists("./influence"):
     os.makedirs("./influence")
-influence_output_dir = os.path.join("./influence", model_name)
+    
+influence_output_dir = os.path.join("./influence", model_name, "_".join([dataset_train_name, dataset_train_split_name, dataset_test_name, dataset_test_split_name]))
 if not os.path.exists(influence_output_dir):
     os.makedirs(influence_output_dir)
 
 
-# os.environ["CUDA_VISIBLE_DEVICES"] = args.cuda_visible_devices
 os.environ["TOKENIZERS_PARALLELISM"] = "True"
 
 
 
-# run.save()
 
-
-from transformers import RobertaConfig,AutoConfig
-from transformers import RobertaForMaskedLM
 import torch
-import traceback
+
 
 import logging
 logging.basicConfig(
@@ -67,7 +67,7 @@ logging.basicConfig(
 
 import util
 
-from tqdm import tqdm
+
 import time
 
 import datasets
@@ -76,12 +76,26 @@ from util import tokenize_tulu_dataset
 
 
 # TODO we only need to know the lenght of the dataset here
-dataset = None
-if "tulu" in args.dataset:
-    dataset = tokenize_tulu_dataset(args.dataset)
+
+dataset_train = None
+if "tulu" in args.dataset_train:
+    dataset_train = tokenize_tulu_dataset(args.dataset_train, args.dataset_train_split)
 else:
-    dataset = load_dataset(args.dataset)["train"] 
-    dataset.set_transform(lambda x : tokenizer(x["text"], return_special_tokens_mask=True, truncation=True, padding="max_length", max_length=512))
+    dataset_train = load_dataset(args.dataset_train)[args.dataset_train_split] 
+    
+dataset_test = None
+
+if args.dataset_test is not None:
+    if "tulu" in args.dataset_test:
+        dataset_test = tokenize_tulu_dataset(args.dataset_test, args.dataset_test_split)
+    else:
+        dataset_test = load_dataset(args.dataset_test)[args.dataset_test_split] 
+else:
+    dataset_test = dataset_train
+
+
+
+
 
 
 
@@ -158,13 +172,6 @@ def calc_partial(tasks, subtasks,completion_times_influence, einsum_times_influe
 
 
 
-def get_all_chunks(checkpoint_path):
-    return [ os.path.join(gradient_output_dir, os.path.basename(checkpoint_path),str(i) + "_" + str(i + args.gradients_per_file)) for i in range(0, len(dataset), args.gradients_per_file)]
-    
-    return [str(x) for x in Path(checkpoint_path).glob("*")]
-
-
-
 
 
 #########################################
@@ -192,12 +199,10 @@ from util import DeterministicDataCollatorForLanguageModeling
 
 
 
-import itertools
-import subprocess
 import sys
 
 from multiprocessing import Pool, Manager
-import glob
+
 
 import shutil
 if __name__ == '__main__':
@@ -209,18 +214,11 @@ if __name__ == '__main__':
 
 
     pool_merge = Pool(args.num_processes)
-
-    print(sum(os.path.isdir(os.path.join(gradient_output_dir, item)) for item in os.listdir(gradient_output_dir)), "gradient folders waiting", flush=True)
     checkpoint = checkpoints[args.checkpoint_nr]
         
-    # copy gradients to local filesystem
-
-    gradient_output_dir_local = os.path.join("/tmp/gradients", model_name)
-    path_remote = os.path.join(gradient_output_dir, checkpoint.split("-")[-1])
-    path_local = os.path.join(gradient_output_dir_local, checkpoint.split("-")[-1])
    ###############
-    print(sum(os.path.isdir(os.path.join(gradient_output_dir, item)) for item in os.listdir(gradient_output_dir)), "gradient folders waiting", flush=True)
-    out_path = os.path.join(influence_output_dir, checkpoint.split("-")[-1])
+  
+    out_path = os.path.join(influence_output_dir, os.path.basename(checkpoint))
     if os.path.isfile(out_path):
         logging.info("Skipping {}, already calculated".format(out_path) )
         
@@ -235,18 +233,26 @@ if __name__ == '__main__':
         
         # specify tasks for subprocesses
         jobs = []
+
+        tasks = []
+        chunks_train = [ os.path.join(gradient_output_dir_train, os.path.basename(checkpoint), str(i) + "_" + str(i + args.gradients_per_file)) for i in range(0, len(dataset_train), args.gradients_per_file)]
+
+        for chunk_path_a in chunks_train:
+            start_id_a, stop_id_a = os.path.basename(chunk_path_a).split( "_")
+            start_id_a = int(start_id_a)
+            stop_id_a = int(stop_id_a)
+            tasks.append((chunk_path_a,start_id_a, stop_id_a, ))
+
         subtasks = []
-        print("get_all_chunks(checkpoint)", len(get_all_chunks(checkpoint)), flush=True)
-        for chunk_path_b in get_all_chunks(checkpoint):
-            #print("chunk_path_b",chunk_path_b)
+        chunks_test = [ os.path.join(gradient_output_dir_test, os.path.basename(checkpoint), str(i) + "_" + str(i + args.gradients_per_file)) for i in range(0, len(dataset_test), args.gradients_per_file)]
+
+        for chunk_path_b in chunks_test:
             start_id_b, stop_id_b = os.path.basename(chunk_path_b).split( "_")
             start_id_b = int(start_id_b)
             stop_id_b = int(stop_id_b)
             subtasks.append((chunk_path_b,start_id_b, stop_id_b, ))
 
-        print("subtasks", len(subtasks), flush=True)
-        for tasks in batch(subtasks, args.batch_size):
-            print("tasks", len(tasks),flush=True)
+        for tasks in batch(tasks, args.batch_size):
             jobs.append((tasks, subtasks,completion_times_influence, einsum_times_influence))
        
         print("jobs", len(jobs),flush=True)
@@ -264,17 +270,18 @@ if __name__ == '__main__':
             run.log({"influence/pool_ram_usage":util.get_pool_memory_usage(pool_merge)}, commit=True)
             time.sleep(10)   
         print("onPoolDone", flush=True)
-        result_checkpoint = torch.zeros((len(dataset)))
+        result_checkpoint = torch.zeros((len(dataset_train)))
         for rr in r.get():
             for task, result in zip(*rr):
                 chunk_path_a, start_id_a, stop_id_a = task
                 result_checkpoint[start_id_a:(start_id_a + result.shape[0])] += result #  the stop_ids are taken from the task description in if.ipynb and can therefore be higher than the actual lenght
-        result_checkpoint = (result_checkpoint / len(dataset)).unsqueeze(0)   
+        result_checkpoint = (result_checkpoint / len(dataset_test)).unsqueeze(0)   
         torch.save(result_checkpoint, out_path)
         logging.info("Saved influence for checkpoint".format(out_path))
         logging.info("Deleting gradients for {}".format(checkpoint))
         
-        shutil.rmtree(path_remote, ignore_errors=True)
+        # shutil.rmtree(gradient_output_dir_train, ignore_errors=True)
+        # shutil.rmtree(gradient_output_dir_test, ignore_errors=True)
         
     pool_merge.close()
     pool_merge.join()

@@ -159,10 +159,10 @@ from functools import partial
 from datasets import load_dataset
 from transformers import AutoTokenizer
 
-def tokenize_tulu_dataset(tulu_dataset_name):
+def tokenize_tulu_dataset(tulu_dataset_name, split):
     assert "tulu" in tulu_dataset_name, "Check dataset name. Example: allenai/tulu-v2-sft-mixture"
 
-    dataset = load_dataset(tulu_dataset_name, split="train[:1%]")
+    dataset = load_dataset(tulu_dataset_name, split=split)
 
     tokenizer = AutoTokenizer.from_pretrained("allenai/OLMo-2-1124-7B")
 

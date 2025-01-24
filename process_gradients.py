@@ -16,11 +16,11 @@ parser = argparse.ArgumentParser("gradient_extraction")
 
 parser.add_argument("model", help="A model on the hf hub. Format: username/name_curriculum")
 parser.add_argument("dataset_train", help="A dataset on the hf hub. Format: username/name")
-parser.add_argument("--dataset_train_split", help="The split to access", default="train[:1%]")
+parser.add_argument("--dataset_train_split", help="The split to access", default="train")
 parser.add_argument("checkpoint_nr", help="Id of the checkpoint to extract gradients for (starting at 0)",type=int)
 parser.add_argument("--num_processes", help="Number of processes to use when doing dot product (runs on cpu)", type=int, nargs="?", const=1, default=1)
 parser.add_argument("--gradients_per_file", help="Number of gradients per output file", type=int, nargs="?", const=1, default=10000)
-parser.add_argument("--batch_size", help="How many chunks each subprocess will keep in memory", type=int, nargs="?", const=1, default=108)
+parser.add_argument("--batch_size", help="How many chunks each subprocess will keep in memory", type=int, nargs="?", const=1, default=1000)
 
 parser.add_argument("--dataset_test", help="A dataset on the hf hub. If supplied, returns one score per test instance. Format: username/name", default=None)
 parser.add_argument("--dataset_test_split", help="The split to access", default="test")
@@ -124,7 +124,6 @@ def calc_partial(tasks, subtasks,completion_times_influence, einsum_times_influe
     """
 
 
-    setproctitle.setproctitle("(loris) max 500 GB RAM total")
     device = "cpu"
     
 
@@ -136,36 +135,23 @@ def calc_partial(tasks, subtasks,completion_times_influence, einsum_times_influe
         load_fn = lambda chunk_path: torch.load(chunk_path, weights_only=True, map_location=device).flatten(1)
 
         with ThreadPoolExecutor(max_workers=50) as executor:
-            chunks_a = list(executor.map(lambda task: load_fn(task[0]), tasks))
-
-        print("num chunks", len(chunks_a), flush=True)
-        total_size_gb = lambda tensors: sum(t.element_size() * t.numel() for t in tensors) / (1024**3)
-        print("size", total_size_gb(chunks_a), flush=True)
-        # chunks_a = [torch.load(chunk_path_a, weights_only=True,map_location=device).flatten(1) for (chunk_path_a,start_id_a, stop_id_a) in tasks]
+            chunks_a = list(executor.map(lambda task: (load_fn(task[0]), task[1], task[2]), tasks))
 
         logging.info(f"Time to load task: {time.time() - start_time:.4f} seconds")
         print(f"Time to load task: {time.time() - start_time:.4f} seconds", flush=True)
-        results = [torch.zeros((chunk_a.shape[0])).to(device) for chunk_a in chunks_a]
-        start_time = time.time()
-
-        tasks_paths = list(zip(*tasks))[0]
-
-        # reuse the chunks in chunks_a if they are in this subtask
-        def load_cached(chunk_path):
-            if chunk_path in tasks_paths:
-                return chunks_a[tasks_paths.index(chunk_path)]
-            else:
-                return torch.load(chunk_path, weights_only=True, map_location=device).flatten(1)
-
+        
+        results = []
+        start_time = time.time()  
+        
         for chunk_path_b,start_id_b, stop_id_b in subtasks:
-            chunk_b = load_cached(chunk_path_b)
+            chunk_b = load_fn(chunk_path_b) # reuse the chunks in chunks_a if they are in this subtask
             start_time_einsum = time.time()
-            for i, chunk_a in enumerate(chunks_a):
-                results[i]  += torch.einsum('ik, kj -> i', chunk_a, chunk_b.T)
+            for chunk_a, start_id_a, stop_id_a in chunks_a:
+                results.append((torch.matmul(chunk_a, chunk_b.T), start_id_a, stop_id_a, start_id_b, stop_id_b))
             einsum_times_influence.append(time.time() - start_time_einsum)
         logging.info(f"Time to einsum: {time.time() - start_time:.4f} seconds; {(time.time() - start_time)/len(subtasks):.4f} s/chunk")
         completion_times_influence.append(time.time() - start_time)
-        return (tasks, results)
+        return results
 
 
 
@@ -219,7 +205,7 @@ if __name__ == '__main__':
    ###############
   
     out_path = os.path.join(influence_output_dir, os.path.basename(checkpoint))
-    if os.path.isfile(out_path):
+    if False and os.path.isfile(out_path):
         logging.info("Skipping {}, already calculated".format(out_path) )
         
         
@@ -261,6 +247,8 @@ if __name__ == '__main__':
 
         r = pool_merge.starmap_async(calc_partial, jobs)
         
+        result_checkpoint = torch.empty((len(dataset_train), len(dataset_test)))
+
         while not r.ready(): # to enable logging troughput: loop to not block the main process
             #print("Tasks still running...", completion_times_influence)
             while len(completion_times_influence) > 0:
@@ -269,13 +257,12 @@ if __name__ == '__main__':
                 run.log({"influence/time_einsum_per_chunk": einsum_times_influence.pop()}, commit=True)
             run.log({"influence/pool_ram_usage":util.get_pool_memory_usage(pool_merge)}, commit=True)
             time.sleep(10)   
-        print("onPoolDone", flush=True)
-        result_checkpoint = torch.zeros((len(dataset_train)))
-        for rr in r.get():
-            for task, result in zip(*rr):
-                chunk_path_a, start_id_a, stop_id_a = task
-                result_checkpoint[start_id_a:(start_id_a + result.shape[0])] += result #  the stop_ids are taken from the task description in if.ipynb and can therefore be higher than the actual lenght
-        result_checkpoint = (result_checkpoint / len(dataset_test)).unsqueeze(0)   
+        rr = r.get()
+        for result, start_id_a, stop_id_a, start_id_b, stop_id_b in rr[0]:
+            result_checkpoint[start_id_a:start_id_a+result.shape[0], start_id_b:start_id_b+result.shape[1]] = result
+            
+    
+        # result_checkpoint = (result_checkpoint / len(dataset_test)).unsqueeze(0)   
         torch.save(result_checkpoint, out_path)
         logging.info("Saved influence for checkpoint".format(out_path))
         logging.info("Deleting gradients for {}".format(checkpoint))

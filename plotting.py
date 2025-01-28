@@ -26,12 +26,14 @@ import util
 from scipy.stats import zscore
 from torch.nn.utils.rnn import pad_sequence
 
-def load_data_for_plotting(dataset_name, curriculum_name, model_type="", influence_output_dir="./influence"):
-    influence_output_dir = os.path.join(influence_output_dir, os.path.basename(dataset_name)+"_"+("" if model_type == "" else model_type +"_")+curriculum_name.split(".")[0])
+def load_data_for_plotting(dataset_name, dataset_split, curriculum_name, model_type="", influence_output_dir="./mean_influence"):
+    model_name = os.path.join(os.path.basename(dataset_name)+"_"+("" if model_type == "" else model_type +"_")+curriculum_name.split(".")[0])
+    influence_output_dir = os.path.join(influence_output_dir, model_name, os.path.basename(dataset_name) + "_" +dataset_split + "_" + os.path.basename(dataset_name) + "_" +dataset_split)
+    print("influence_output_dir",influence_output_dir)
     dataset = load_dataset(dataset_name)["train"]
     curriculum = util.get_curriculum(dataset_name, curriculum_name)
 
-    df = pd.DataFrame({int(result_checkpoint): torch.load(os.path.join(influence_output_dir,result_checkpoint),weights_only=True,map_location="cpu").numpy().flatten() for result_checkpoint in os.listdir(influence_output_dir)})
+    df = pd.DataFrame({result_checkpoint: torch.load(os.path.join(influence_output_dir,result_checkpoint),weights_only=True,map_location="cpu").numpy().flatten() for result_checkpoint in os.listdir(influence_output_dir)})
     df.sort_index(axis=1)
 
     df = df.reindex(sorted(df.columns, reverse=False), axis=1)

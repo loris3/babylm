@@ -29,3 +29,4 @@ stream.py
 get_olmo_checkpoints.ipynb
 babylm_data_preprocessing
 babylm
+mean_influence/*

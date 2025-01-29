@@ -22,6 +22,7 @@ parser.add_argument("--num_processes", help="Number of processes to use when doi
 parser.add_argument("--gradients_per_file", help="Number of gradients per output file", type=int, nargs="?", const=1, default=10000)
 parser.add_argument("--batch_size", help="How many chunks each subprocess will keep in memory", type=int, nargs="?", const=1, default=1000)
 
+parser.add_argument("--mode", help="If 'mean', mean influence of individual train on all examples in test; if 'single' 1 train -> 1 test", default="single")
 parser.add_argument("--dataset_test", help="A dataset on the hf hub. If supplied, returns one score per test instance. Format: username/name", default=None)
 parser.add_argument("--dataset_test_split", help="The split to access", default="test")
 args = parser.parse_args()
@@ -142,17 +143,28 @@ def calc_partial(tasks, subtasks,completion_times_influence, einsum_times_influe
         
         results = []
         start_time = time.time()  
-        
-        for chunk_path_b,start_id_b, stop_id_b in subtasks:
-            chunk_b = load_fn(chunk_path_b) # reuse the chunks in chunks_a if they are in this subtask
-            start_time_einsum = time.time()
-            for chunk_a, start_id_a, stop_id_a in chunks_a:
-                results.append((torch.matmul(chunk_a, chunk_b.T), start_id_a, stop_id_a, start_id_b, stop_id_b))
-            einsum_times_influence.append(time.time() - start_time_einsum)
-        logging.info(f"Time to einsum: {time.time() - start_time:.4f} seconds; {(time.time() - start_time)/len(subtasks):.4f} s/chunk")
-        completion_times_influence.append(time.time() - start_time)
-        return results
 
+
+        if args.mode == "single":
+            for chunk_path_b,start_id_b, stop_id_b in subtasks:
+                chunk_b = load_fn(chunk_path_b) # reuse the chunks in chunks_a if they are in this subtask
+                start_time_einsum = time.time()
+                for chunk_a, start_id_a, stop_id_a in chunks_a:
+                    results.append((torch.matmul(chunk_a, chunk_b.T), start_id_a, stop_id_a, start_id_b, stop_id_b))
+                einsum_times_influence.append(time.time() - start_time_einsum)
+            logging.info(f"Time to einsum: {time.time() - start_time:.4f} seconds; {(time.time() - start_time)/len(subtasks):.4f} s/chunk")
+            completion_times_influence.append(time.time() - start_time)
+            return results
+        else:
+            for chunk_path_b,start_id_b, stop_id_b in subtasks:
+                chunk_b = load_cached(chunk_path_b)
+                start_time_einsum = time.time()
+                for i, chunk_a in enumerate(chunks_a):
+                    results[i]  += torch.einsum('ik, kj -> i', chunk_a, chunk_b.T)
+                einsum_times_influence.append(time.time() - start_time_einsum)
+            logging.info(f"Time to einsum: {time.time() - start_time:.4f} seconds; {(time.time() - start_time)/len(subtasks):.4f} s/chunk")
+            completion_times_influence.append(time.time() - start_time)
+            return (tasks, results)
 
 
 
@@ -247,7 +259,13 @@ if __name__ == '__main__':
 
         r = pool_merge.starmap_async(calc_partial, jobs)
         
-        result_checkpoint = torch.empty((len(dataset_train), len(dataset_test)))
+
+        result_checkpoint = None
+        print("moooooooode", args.mode)
+        if args.mode == "single":
+            result_checkpoint  = torch.empty((len(dataset_train), len(dataset_test)))
+        else:
+            result_checkpoint = torch.zeros((len(dataset_train)))
 
         while not r.ready(): # to enable logging troughput: loop to not block the main process
             #print("Tasks still running...", completion_times_influence)
@@ -257,9 +275,20 @@ if __name__ == '__main__':
                 run.log({"influence/time_einsum_per_chunk": einsum_times_influence.pop()}, commit=True)
             run.log({"influence/pool_ram_usage":util.get_pool_memory_usage(pool_merge)}, commit=True)
             time.sleep(10)   
-        rr = r.get()
-        for result, start_id_a, stop_id_a, start_id_b, stop_id_b in rr[0]:
-            result_checkpoint[start_id_a:start_id_a+result.shape[0], start_id_b:start_id_b+result.shape[1]] = result
+
+
+
+        results = r.get()
+       
+        if args.mode == "single":
+            for result, start_id_a, stop_id_a, start_id_b, stop_id_b in results[0]:
+                result_checkpoint[start_id_a:start_id_a+result.shape[0], start_id_b:start_id_b+result.shape[1]] = result
+        else:
+            for rr in results:
+                for task, result in zip(*rr):
+                    chunk_path_a, start_id_a, stop_id_a = task
+                    result_checkpoint[start_id_a:(start_id_a + result.shape[0])] += result #  the stop_ids are taken from the task description in if.ipynb and can therefore be higher than the actual lenght
+            result_checkpoint = (result_checkpoint / len(dataset_test)).unsqueeze(0)   
             
     
         # result_checkpoint = (result_checkpoint / len(dataset_test)).unsqueeze(0)   

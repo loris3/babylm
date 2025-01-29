@@ -122,11 +122,10 @@ def get_for_checkpoint(checkpoint_path, i_start, i_end, completion_times_gradien
         model = None
         if "llama" in args.model:
             model_config = AutoConfig.from_pretrained(checkpoint_path)
-            model = LlamaForCausalLM(config=model_config,trust_remote_code=True).to(device)
+            model = LlamaForCausalLM(config=model_config).to(device)
         elif "OLMo" in args.model:
             print("loading model", flush=True)
             model = AutoModelForCausalLM.from_pretrained(args.model, revision=checkpoint_path, torch_dtype=torch.float16).to(device)
-            print("model laoded", flush=True)
         else:
             model_config = AutoConfig.from_pretrained(checkpoint_path)
             model = RobertaForMaskedLM(config=model_config).to(device)
@@ -169,7 +168,7 @@ if "llama" in args.model:
 )
 
 elif "OLMo" in args.model:
-    tokenizer = AutoTokenizer.from_pretrained(args.model,trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(args.model)
     data_collator = DataCollatorForLanguageModeling(
     tokenizer=tokenizer, mlm=False
 )

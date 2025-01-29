@@ -17,7 +17,7 @@ def main():
 
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--n_checkpoints",help="Number of checkpoints to process, starting at ID 0", type=int)
-    group.add_argument("--checkpoints",action=SplitArgs, help="Comma seperated checkpoint IDs, starting at 0, (e.g., '0,1,5,9')" )
+    group.add_argument("--checkpoints",action=SplitArgs, help="Comma seperated checkpoint IDs, starting at 0, (e.g., '0,1,5,9')")
     
     args = parser.parse_args()
 
@@ -25,7 +25,14 @@ def main():
     prev_job_ids_gradients = []
     prev_job_ids_influence = []
 
-    checkpoint_ids = list(range(args.n_checkpoints)) if args.checkpoints is None else args.checkpoints
+    checkpoint_ids = None
+    
+    # hotfix: N+1 checkpoints are created for equitoken datasets, skip the first/include the final model 
+    if "llama" in args.dataset:
+        checkpoint_ids = list(range(1, args.n_checkpoints+1)) if args.checkpoints is None else args.checkpoints
+
+    else:
+        checkpoint_ids = list(range(args.n_checkpoints)) if args.checkpoints is None else args.checkpoints
 
     for i in checkpoint_ids:
 

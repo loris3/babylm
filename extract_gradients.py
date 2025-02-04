@@ -36,8 +36,8 @@ parser.add_argument("model", help="A model on the hf hub. Format: username/name_
 parser.add_argument("dataset", help="A dataset on the hf hub. Format: username/name")
 parser.add_argument("--dataset_split", help="The split to access", default="train")
 parser.add_argument("checkpoint_nr", help="Id of the checkpoint to extract gradients for (starting at 0)",type=int)
-parser.add_argument("--num_processes_gradients", help="Number of processes to use when obtaining gradients (one model per process)", type=int, nargs="?", const=1, default=12) # 12 w 4 gpus -> 3 models per gpu
-parser.add_argument("--gradients_per_file", help="Number of gradients per output file", type=int, nargs="?", const=1, default=10000) # ~7.4 GB per file for BERT
+parser.add_argument("--num_processes_gradients", help="Number of processes to use when obtaining gradients (one model per process)", type=int, nargs="?", const=1, default=4) # 12 w 4 gpus -> 3 models per gpu
+parser.add_argument("--gradients_per_file", help="Number of gradients per output file", type=int, nargs="?", const=1, default=1000) # ~7.4 GB per file for BERT
 
 args = parser.parse_args()
 
@@ -136,7 +136,13 @@ def get_for_checkpoint(checkpoint_path, i_start, i_end, completion_times_gradien
         print(f"Time to get gradients: {time.time() - start_time:.4f} s/chunk", flush=True)
         
         torch.save( gradients, out_path)
+        del model
+        del gradients
+        torch.cuda.empty_cache()
+        time.sleep(20)
         gpu_queue.put(gpu_id)
+        
+
         completion_times_gradients.append(time.time() - start_time)
    
     except Exception as e:

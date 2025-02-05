@@ -132,17 +132,16 @@ def get_for_checkpoint(checkpoint_path, i_start, i_end, completion_times_gradien
         model.train()
 
         start_time = time.time()
-        gradients = torch.stack([get_loss_gradient(model, example,device).to(torch.bfloat16).detach().cpu() for example in dataset[i_start:i_end]["input_ids"]])#.cpu()
+        gradients = torch.stack([get_loss_gradient(model, example,device).detach().cpu().to(torch.bfloat16) for example in dataset[i_start:i_end]["input_ids"]])#.cpu()
         print(f"Time to get gradients: {time.time() - start_time:.4f} s/chunk", flush=True)
-        
-        torch.save( gradients, out_path)
         del model
-        del gradients
         torch.cuda.empty_cache()
-        time.sleep(20)
         gpu_queue.put(gpu_id)
+               
+        torch.save( gradients, out_path)
+        del gradients
         
-
+        
         completion_times_gradients.append(time.time() - start_time)
    
     except Exception as e:
@@ -191,12 +190,33 @@ dataset = None
 
 if "tulu" in args.dataset:
     dataset = tokenize_tulu_dataset(args.dataset, args.dataset_split)
+elif "alpaca" in args.dataset:
+    # https://wandb.ai/capecape/alpaca_ft/reports/How-to-Fine-tune-an-LLM-Part-3-The-HuggingFace-Trainer--Vmlldzo1OTEyNjMy#sampling-from-the-model-during-training
+    def prompt_no_input(output,_,instruction):
+        return ("Below is an instruction that describes a task. "
+                "Write a response that appropriately completes the request.\n\n"
+                "### Instruction:\n{instruction}\n\n### Response:\n{output}").format(instruction=instruction, output=output)
+
+
+    def prompt_input(output,input,instruction):
+        return ("Below is an instruction that describes a task, paired with an input that provides further context. "
+                "Write a response that appropriately completes the request.\n\n"
+                "### Instruction:\n{instruction}\n\n### Input:\n{input}\n\n### Response:\n{output}").format(instruction=instruction, input=input, output=output)
+
+
+    def create_alpaca_prompt(rows):
+
+        return [prompt_no_input(*row) if row[1] == "" else prompt_input(*row) for row in zip(*rows.values())]
+    
+    dataset = load_dataset(args.dataset)[args.dataset_split] 
+    dataset.set_transform(lambda x : tokenizer(create_alpaca_prompt(x), return_special_tokens_mask=True, truncation=True, padding="max_length", max_length=4096))
+
 else:
     dataset = load_dataset(args.dataset)[args.dataset_split] 
     dataset.set_transform(lambda x : tokenizer(x["text"], return_special_tokens_mask=True, truncation=True, padding="max_length", max_length=512))
 
-
-
+# print(dataset[0:2])
+# print(dataset[0:10])
 checkpoints =  get_checkpoints_hub(args.model)
 
 
@@ -213,6 +233,7 @@ if __name__ == '__main__':
 
         for i in range(0,torch.cuda.device_count()):
             gpu_queue.put(i)
+            print(i)
        
 
     manager = Manager()

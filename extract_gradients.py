@@ -228,12 +228,13 @@ gpu_queue = Queue()
 if __name__ == '__main__':
     
     assert args.num_processes_gradients//torch.cuda.device_count() > 0, "Need to assign at least as many processes as GPUs (change num_processes_gradients!)"
+    print("torch.cuda.device_count()",torch.cuda.device_count())
     # set up gpu queue to allocate gpus evenly between processes
     for _ in range(args.num_processes_gradients//torch.cuda.device_count()):
 
         for i in range(0,torch.cuda.device_count()):
             gpu_queue.put(i)
-            print(i)
+            print(i, flush=True)
        
 
     manager = Manager()

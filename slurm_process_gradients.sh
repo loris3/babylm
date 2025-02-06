@@ -1,11 +1,11 @@
 #!/bin/bash
 # script name: extract_gradients.sh
 #SBATCH --job-name="influence computation"
-#SBATCH --comment="RoBERTa Training Data Influence Experiments. Runs after gradient extraction for checkpoint $3"
+#SBATCH --comment="Olmo2 Training Data Influence Experiments. Runs after gradient extraction for checkpoint $3"
 #SBATCH --time=0-02:00:00
 #SBATCH --ntasks=1
-#SBATCH --mem=795GB
-#SBATCH --cpus-per-task=36
+#SBATCH --mem=1750GB
+#SBATCH --cpus-per-task=32
 #SBATCH --nodelist=dgx-h100-em2
 
 source /etc/profile.d/modules.sh
@@ -24,10 +24,10 @@ module load miniforge
 
 # df -h $TMPDIR/gradients
 
-conda env update --file environment.yml
+# conda env update --file environment.yml
 
 # Run your python script
-python process_gradients.py $1 $2 $3 --mode=mean
+python process_gradients.py $1 $2 $3 --mode=mean --dataset_test_split=train --dataset_train_split=train
  
 # Cleanup
 module purge

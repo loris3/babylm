@@ -19,8 +19,8 @@ parser.add_argument("dataset_train", help="A dataset on the hf hub. Format: user
 parser.add_argument("--dataset_train_split", help="The split to access", default="train")
 parser.add_argument("checkpoint_nr", help="Id of the checkpoint to extract gradients for (starting at 0)",type=int)
 parser.add_argument("--num_processes", help="Number of processes to use when doing dot product (runs on cpu)", type=int, nargs="?", const=1, default=1)
-parser.add_argument("--gradients_per_file", help="Number of gradients per output file", type=int, nargs="?", const=1, default=10000)
-parser.add_argument("--batch_size", help="How many chunks each subprocess will keep in memory", type=int, nargs="?", const=1, default=2)
+parser.add_argument("--gradients_per_file", help="Number of gradients per output file", type=int, nargs="?", const=1, default=1000)
+parser.add_argument("--batch_size", help="How many chunks each subprocess will keep in memory", type=int, nargs="?", const=1, default=52)
 
 parser.add_argument("--mode", help="If 'mean', mean influence of individual train on all examples in test; if 'single' 1 train -> 1 test", default="single")
 parser.add_argument("--dataset_test", help="A dataset on the hf hub. If supplied, returns one score per test instance. Format: username/name", default=None)
@@ -140,12 +140,13 @@ def calc_partial(tasks, subtasks,completion_times_influence, einsum_times_influe
         chunks_a = None
      
         start_time = time.time()
-        len_ds = 53457
       
         # load task (of batch_size chunks)
         load_fn = lambda chunk_path: torch.load(chunk_path, weights_only=True, map_location=device).flatten(1)
 
-        chunks_a = [(load_fn(task[0]), task[1], task[2]) for task in tasks]
+        # chunks_a = [(load_fn(task[0]), task[1], task[2]) for task in tasks]
+        with ThreadPoolExecutor(max_workers=50) as executor:
+            chunks_a = list(executor.map(lambda task: (load_fn(task[0]), task[1], task[2]), tasks))
 
 
         logging.info(f"Time to load task: {time.time() - start_time:.4f} seconds")

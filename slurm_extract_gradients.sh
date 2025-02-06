@@ -5,7 +5,7 @@
 #SBATCH --time=0-06:00:00
 #SBATCH --gres=gpu:4
 #SBATCH --ntasks=1
-#SBATCH --mem=200G
+#SBATCH --mem=250G
 #SBATCH --cpus-per-task=24
 #SBATCH --nodelist=dgx-h100-em2
 source /etc/profile.d/modules.sh
@@ -24,7 +24,7 @@ module load miniforge
 
 
 
-# conda env update --file environment.yml
+conda env update --file environment.yaml
 
 # Run your python script
 python extract_gradients.py $1 $2 $3

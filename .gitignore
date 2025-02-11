@@ -30,3 +30,6 @@ get_olmo_checkpoints.ipynb
 babylm_data_preprocessing
 babylm
 mean_influence/*
+influene_old/*
+.gitignore
+babylm_data_preprocessing

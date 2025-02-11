@@ -38,6 +38,7 @@ parser.add_argument("--dataset_split", help="The split to access", default="trai
 parser.add_argument("checkpoint_nr", help="Id of the checkpoint to extract gradients for (starting at 0)",type=int)
 parser.add_argument("--num_processes_gradients", help="Number of processes to use when obtaining gradients (one model per process)", type=int, nargs="?", const=1, default=4) # 12 w 4 gpus -> 3 models per gpu
 parser.add_argument("--gradients_per_file", help="Number of gradients per output file", type=int, nargs="?", const=1, default=1000) # ~7.4 GB per file for BERT
+parser.add_argument("--paradigm", help="Eiter 'pre', 'mlm', or 'sft'", default="pre")
 
 args = parser.parse_args()
 
@@ -68,7 +69,7 @@ def get_loss_gradient(model, example,device):
 
     Args:
         model: A model with a `forward` method wich returns `loss`
-        example: A string from the training data
+        example: An instance from the training data
         device: What GPU to use (e.g., cuda:0)
 
     Returns:
@@ -77,7 +78,9 @@ def get_loss_gradient(model, example,device):
     
     model.zero_grad()
     
+
     input_ids, labels = data_collator((torch.tensor(example),)).values() # the data_collator used here applies the exact same mask used in the respective epoch
+
     inputs_embeds=model.get_input_embeddings().weight[input_ids].to(device)
     inputs_embeds.retain_grad()
 
@@ -89,7 +92,6 @@ def get_loss_gradient(model, example,device):
     loss.retain_grad()
     return torch.autograd.grad(loss, inputs_embeds, retain_graph=False)[0].squeeze()
     
-   
 
 
 def get_for_checkpoint(checkpoint_path, i_start, i_end, completion_times_gradients):
@@ -132,7 +134,7 @@ def get_for_checkpoint(checkpoint_path, i_start, i_end, completion_times_gradien
         model.train()
 
         start_time = time.time()
-        gradients = torch.stack([get_loss_gradient(model, example,device).detach().cpu().to(torch.bfloat16) for example in dataset[i_start:i_end]["input_ids"]])#.cpu()
+        gradients = torch.stack([get_loss_gradient(model, example,device).detach().cpu().to(torch.bfloat16) for example in dataset[i_start:i_end]])#.cpu()
         print(f"Time to get gradients: {time.time() - start_time:.4f} s/chunk", flush=True)
         del model
         torch.cuda.empty_cache()
@@ -165,32 +167,29 @@ def get_for_checkpoint(checkpoint_path, i_start, i_end, completion_times_gradien
 #     return [ os.path.join(gradient_output_dir, checkpoint_path.split("-")[-1],str(i) + "_" + str(i + args.gradients_per_file)) for i in range(0, len(dataset), args.gradients_per_file)]
     
 tokenizer = None
-data_collator = None
+
+
 if "llama" in args.model:
     tokenizer = GPT2TokenizerFast.from_pretrained(args.model, max_len=512)
-    data_collator = DataCollatorForLanguageModeling(
-    tokenizer=tokenizer, mlm=False
-)
-
 elif "OLMo" in args.model:
     tokenizer = AutoTokenizer.from_pretrained(args.model)
-    data_collator = DataCollatorForLanguageModeling(
-    tokenizer=tokenizer, mlm=False
-)
-else:
+else: # RoBERTa
     tokenizer = RobertaTokenizerFast.from_pretrained(args.model, max_len=512)
-    data_collator = DeterministicDataCollatorForLanguageModeling(
-    tokenizer=tokenizer, mlm=True, mlm_probability=0.15
-) 
+   
+
+from transformers import DataCollatorForSeq2Seq
+from trl import apply_chat_template, is_conversational
 
 
-from util import tokenize_tulu_dataset
+
+
+
 
 dataset = None
 
-if "tulu" in args.dataset:
-    dataset = tokenize_tulu_dataset(args.dataset, args.dataset_split)
-elif "alpaca" in args.dataset:
+paradigm = args.paradigm
+
+if "alpaca" in args.dataset:
     # https://wandb.ai/capecape/alpaca_ft/reports/How-to-Fine-tune-an-LLM-Part-3-The-HuggingFace-Trainer--Vmlldzo1OTEyNjMy#sampling-from-the-model-during-training
     def prompt_no_input(output,_,instruction):
         return ("Below is an instruction that describes a task. "
@@ -211,9 +210,28 @@ elif "alpaca" in args.dataset:
     dataset = load_dataset(args.dataset)[args.dataset_split] 
     dataset.set_transform(lambda x : tokenizer(create_alpaca_prompt(x), return_special_tokens_mask=True, truncation=True, padding="max_length", max_length=4096))
 
-else:
+    paradigm = "pre"
+elif paradigm in ["pre", "mlm"]:
     dataset = load_dataset(args.dataset)[args.dataset_split] 
-    dataset.set_transform(lambda x : tokenizer(x["text"], return_special_tokens_mask=True, truncation=True, padding="max_length", max_length=512))
+    if is_conversational(dataset[0]):
+        dataset.set_transform(lambda x : tokenizer(apply_chat_template(x, tokenizer=tokenizer)["text"], return_special_tokens_mask=True, truncation=True, padding="max_length", max_length=4096 if "OLMo" in args.model else 512))
+
+    else:   
+        dataset.set_transform(lambda x : tokenizer(x["text"], return_special_tokens_mask=True, truncation=True, padding="max_length", max_length=4096 if "OLMo" in args.model else 512))
+
+
+def get_data_collator(paradigm):
+    if paradigm == "mlm":
+        return DeterministicDataCollatorForLanguageModeling(
+            tokenizer=tokenizer, mlm=True, mlm_probability=0.15
+        ) 
+    if paradigm == "pre":
+        return DataCollatorForLanguageModeling(
+            tokenizer=tokenizer, mlm=False
+        )
+   
+
+data_collator = get_data_collator(args.paradigm)
 
 # print(dataset[0:2])
 # print(dataset[0:10])

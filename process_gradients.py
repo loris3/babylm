@@ -90,7 +90,7 @@ else:
     if "tulu" in args.dataset_train:
         dataset_train = tokenize_tulu_dataset(args.dataset_train, args.dataset_train_split)
     else:
-        dataset_train = load_dataset(args.dataset_train)[args.dataset_train_split] 
+        dataset_train = load_dataset(args.dataset_train, split=args.dataset_train_split)
         
 dataset_test = None
 
@@ -98,7 +98,7 @@ if args.dataset_test is not None:
     if "tulu" in args.dataset_test:
         dataset_test = tokenize_tulu_dataset(args.dataset_test, args.dataset_test_split)
     else:
-        dataset_test = load_dataset(args.dataset_test)[args.dataset_test_split] 
+        dataset_test = load_dataset(args.dataset_test, split=args.dataset_test_split)
 else:
     dataset_test = dataset_train
 

@@ -119,7 +119,7 @@ def get_for_checkpoint(checkpoint_path, i_start, i_end, completion_times_gradien
             return 
 
 
-        device = "cpu" #"cuda:" + str(gpu_id)
+        device = "cuda:" + str(gpu_id)
         
         model = None
         if "llama" in args.model:
@@ -192,12 +192,12 @@ if "alpaca" in args.dataset:
 
         return [prompt_no_input(*row) if row[1] == "" else prompt_input(*row) for row in zip(*rows.values())]
     
-    dataset = load_dataset(args.dataset)[args.dataset_split] 
+    dataset = load_dataset(args.dataset, split=args.dataset_split) 
     dataset.set_transform(lambda x : tokenizer(create_alpaca_prompt(x), return_special_tokens_mask=True, truncation=True, padding="max_length", max_length=4096))
 
     paradigm = "pre"
 elif paradigm in ["pre", "mlm"]:
-    dataset = load_dataset(args.dataset)[args.dataset_split] 
+    dataset = load_dataset(args.dataset, split=args.dataset_split)
     if is_conversational(dataset[0]):
         dataset.set_transform(lambda x : tokenizer(apply_chat_template(x, tokenizer=tokenizer)["text"], return_special_tokens_mask=True, truncation=True, padding="max_length", max_length=4096 if "OLMo" in args.model else 512))
 

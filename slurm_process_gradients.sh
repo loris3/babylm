@@ -27,7 +27,7 @@ module load miniforge
 # conda env update --file environment.yml
 
 # Run your python script
-python process_gradients.py $1 $2 $3 --mode=mean --dataset_test_split=train --dataset_train_split=train
+python process_gradients.py $1 $2 $6 --dataset_train_split=$3 --dataset_test=$4 --dataset_test_split=$5 --mode=mean 
  
 # Cleanup
 module purge

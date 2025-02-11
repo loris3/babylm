@@ -38,7 +38,7 @@ parser.add_argument("--dataset_split", help="The split to access", default="trai
 parser.add_argument("checkpoint_nr", help="Id of the checkpoint to extract gradients for (starting at 0)",type=int)
 parser.add_argument("--num_processes_gradients", help="Number of processes to use when obtaining gradients (one model per process)", type=int, nargs="?", const=1, default=4) # 12 w 4 gpus -> 3 models per gpu
 parser.add_argument("--gradients_per_file", help="Number of gradients per output file", type=int, nargs="?", const=1, default=1000) # ~7.4 GB per file for BERT
-parser.add_argument("--paradigm", help="Eiter 'pre', 'mlm', or 'sft'", default="pre")
+parser.add_argument("--paradigm", help="Eiter 'pre', 'mlm', or 'sft'", default="mlm")
 
 args = parser.parse_args()
 
@@ -119,7 +119,7 @@ def get_for_checkpoint(checkpoint_path, i_start, i_end, completion_times_gradien
             return 
 
 
-        device = "cuda:" + str(gpu_id)
+        device = "cpu" #"cuda:" + str(gpu_id)
         
         model = None
         if "llama" in args.model:
@@ -134,7 +134,7 @@ def get_for_checkpoint(checkpoint_path, i_start, i_end, completion_times_gradien
         model.train()
 
         start_time = time.time()
-        gradients = torch.stack([get_loss_gradient(model, example,device).detach().cpu().to(torch.bfloat16) for example in dataset[i_start:i_end]])#.cpu()
+        gradients = torch.stack([get_loss_gradient(model, example,device).detach().cpu().to(torch.bfloat16) for example in dataset[i_start:i_end]["input_ids"]])#.cpu()
         print(f"Time to get gradients: {time.time() - start_time:.4f} s/chunk", flush=True)
         del model
         torch.cuda.empty_cache()
@@ -151,21 +151,6 @@ def get_for_checkpoint(checkpoint_path, i_start, i_end, completion_times_gradien
         raise e
 
 
-
-
-
-        
-# def get_all_chunks(checkpoint_path):
-#     """Returns output paths
-
-#     Args:
-#         checkpoint_path: A path to a model checkpoint
-
-#     Returns:
-#         A list of paths to the individual chunks generated
-#     """
-#     return [ os.path.join(gradient_output_dir, checkpoint_path.split("-")[-1],str(i) + "_" + str(i + args.gradients_per_file)) for i in range(0, len(dataset), args.gradients_per_file)]
-    
 tokenizer = None
 
 
@@ -233,8 +218,7 @@ def get_data_collator(paradigm):
 
 data_collator = get_data_collator(args.paradigm)
 
-# print(dataset[0:2])
-# print(dataset[0:10])
+
 checkpoints =  get_checkpoints_hub(args.model)
 
 
@@ -245,12 +229,12 @@ gpu_queue = Queue()
 
 if __name__ == '__main__':
     
-    assert args.num_processes_gradients//torch.cuda.device_count() > 0, "Need to assign at least as many processes as GPUs (change num_processes_gradients!)"
+    assert args.num_processes_gradients// (max(1, torch.cuda.device_count())) > 0, "Need to assign at least as many processes as GPUs (change num_processes_gradients!)"
     print("torch.cuda.device_count()",torch.cuda.device_count())
     # set up gpu queue to allocate gpus evenly between processes
-    for _ in range(args.num_processes_gradients//torch.cuda.device_count()):
+    for _ in range(args.num_processes_gradients//max(1,torch.cuda.device_count())):
 
-        for i in range(0,torch.cuda.device_count()):
+        for i in range(0,max(1,torch.cuda.device_count())):
             gpu_queue.put(i)
             print(i, flush=True)
        

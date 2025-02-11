@@ -28,12 +28,13 @@ def main():
     
     args = parser.parse_args()
 
+    dataset_test_split  = args.dataset_test_split + "[0:100%]" if not "[" in args.dataset_test_split else args.dataset_test_split
 
     prev_job_ids_gradients = []
     prev_job_ids_influence = []
 
     checkpoint_ids = None
-    
+
     # hotfix: N+1 checkpoints are created for equitoken datasets, skip the first/include the final model 
     if "llama" in args.dataset_train:
         checkpoint_ids = list(range(1, args.n_checkpoints+1)) if args.checkpoints is None else args.checkpoints
@@ -59,7 +60,7 @@ def main():
             args.model,
             args.dataset_test,
             str(i),
-            args.dataset_test_split,
+            dataset_test_split,
             args.paradigm
         ]
 
@@ -126,7 +127,7 @@ def main():
                 args.dataset_train,
                 train_dataset_split,
                 args.dataset_test,
-                args.dataset_test_split,
+                dataset_test_split,
                 str(i)
             ]
             influence_command = [c for c in influence_command if c != ""]

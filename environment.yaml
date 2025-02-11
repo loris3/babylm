@@ -33,4 +33,5 @@ dependencies:
       - torch 
       - torchvision 
       - torchaudio 
+      - trl
 prefix: /data/loriss21dm/babylm/.conda

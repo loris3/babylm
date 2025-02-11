@@ -16,7 +16,7 @@ def main():
     parser.add_argument("--debug", action="store_true", help="Log commands instead of executing them.")
         
     parser.add_argument("--superbatches",help="Times the training dataset should be split", type=int, default=1)
-
+    parser.add_argument("--paradigm",help="One of 'mlm', 'pre", default="pre")
 
     class SplitArgs(argparse.Action):
         def __call__(self, parser, namespace, values, option_string=None):
@@ -59,7 +59,8 @@ def main():
             args.model,
             args.dataset_test,
             str(i),
-            args.dataset_test_split
+            args.dataset_test_split,
+            args.paradigm
         ]
 
         extract_command = [c for c in extract_command if c != ""]
@@ -91,7 +92,8 @@ def main():
                 args.model,
                 args.dataset_train,
                 str(i),
-                train_dataset_split
+                train_dataset_split,
+                args.paradigm
             ]
             extract_command = [c for c in extract_command if c != ""]
             if args.debug:

@@ -27,7 +27,7 @@ module load miniforge
 conda env update --file environment.yaml
 
 # Run your python script
-python extract_gradients.py $1 $2 $3 --dataset_split=$4
+python extract_gradients.py $1 $2 $3 --dataset_split=$4 --paradigm=$5
  
 # Cleanup
 module purge

@@ -21,6 +21,7 @@ module load miniforge
 # E.g. to install networkx
 # conda env update --file environment.yml
 conda activate 
+
 # Run your python script
 python pretrain.py $1 $2 --model_type=$3 
  

@@ -33,3 +33,4 @@ mean_influence/*
 influene_old/*
 .gitignore
 babylm_data_preprocessing
+influence.tar

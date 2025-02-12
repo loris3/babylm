@@ -24,7 +24,7 @@ from util import DeterministicDataCollatorForLanguageModeling
 from multiprocessing import Pool, Queue, Manager
 
 import math
-
+import numpy as np
 from transformers import RobertaTokenizerFast,GPT2TokenizerFast, DataCollatorForLanguageModeling,LlamaForCausalLM
 from transformers import AutoModelForCausalLM, AutoTokenizer
  
@@ -134,13 +134,13 @@ def get_for_checkpoint(checkpoint_path, i_start, i_end, completion_times_gradien
         model.train()
 
         start_time = time.time()
-        gradients = torch.stack([get_loss_gradient(model, example,device).detach().cpu().to(torch.bfloat16) for example in dataset[i_start:i_end]["input_ids"]])#.cpu()
+        gradients = torch.stack([get_loss_gradient(model, example,device).detach().cpu().to(torch.float16) for example in dataset[i_start:i_end]["input_ids"]])#.cpu()
         print(f"Time to get gradients: {time.time() - start_time:.4f} s/chunk", flush=True)
         del model
         torch.cuda.empty_cache()
         gpu_queue.put(gpu_id)
                
-        torch.save( gradients, out_path)
+        np.savez_compressed( out_path,gradients.numpy())
         del gradients
         
         
@@ -242,7 +242,7 @@ if __name__ == '__main__':
     manager = Manager()
     completion_times_gradients = manager.list() # the processes report back to the main process wich handles web logging
 
-    pool_gradients = Pool(args.num_processes_gradients)
+    pool_gradients = Pool(args.num_processes_gradients,maxtasksperchild=1)
     
     checkpoint = checkpoints[args.checkpoint_nr]
     

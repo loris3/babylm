@@ -110,6 +110,7 @@ import util
 
 
 import torch 
+import numpy as np
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -137,18 +138,12 @@ def calc_partial(tasks, subtasks,completion_times_influence, einsum_times_influe
         start_time = time.time()
       
         # load task (of batch_size chunks)
-        load_fn = lambda chunk_path: torch.load(chunk_path, weights_only=True, map_location=device).flatten(1)
+        load_fn = lambda chunk_path: torch.tensor(np.load(chunk_path+".npz")["arr_0"]).flatten(1)
 
         # chunks_a = [(load_fn(task[0]), task[1], task[2]) for task in tasks]
         chunks_a = []
         with ThreadPoolExecutor(max_workers=50) as executor:
             chunks_a = list(executor.map(lambda task: (load_fn(task[0]), task[1], task[2]), tasks))
-
-        chunks_b = []
-        if args.keep_dataset_test_in_memory:
-            with ThreadPoolExecutor(max_workers=50) as executor:
-                chunks_b = list(executor.map(lambda task: (load_fn(subtask[0]), subtask[1], subtask[2]), subtasks))
-
 
         logging.info(f"Time to load task: {time.time() - start_time:.4f} seconds")
         print(f"Time to load task: {time.time() - start_time:.4f} seconds", flush=True)
@@ -175,7 +170,7 @@ def calc_partial(tasks, subtasks,completion_times_influence, einsum_times_influe
                 if chunk_path in tasks_paths:
                     return chunks_a[tasks_paths.index(chunk_path)][0]
                 else:
-                    return torch.load(chunk_path, weights_only=True, map_location=device).flatten(1)
+                    return torch.tensor(np.load(chunk_path+".npz")["arr_0"]).flatten(1)
 
             for chunk_path_b,start_id_b, stop_id_b in subtasks:
                 chunk_b = load_cached(chunk_path_b)

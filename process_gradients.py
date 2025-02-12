@@ -19,8 +19,8 @@ parser.add_argument("dataset_train", help="A dataset on the hf hub. Format: user
 parser.add_argument("--dataset_train_split", help="The split to access", default="train")
 parser.add_argument("checkpoint_nr", help="Id of the checkpoint to extract gradients for (starting at 0)",type=int)
 parser.add_argument("--num_processes", help="Number of processes to use when doing dot product (runs on cpu)", type=int, nargs="?", const=1, default=1)
-parser.add_argument("--gradients_per_file", help="Number of gradients per output file", type=int, nargs="?", const=1, default=1000)
-parser.add_argument("--batch_size", help="How many chunks each subprocess will keep in memory", type=int, nargs="?", const=1, default=52)
+parser.add_argument("--gradients_per_file", help="Number of gradients per output file", type=int, nargs="?", const=1, default=10000)
+parser.add_argument("--batch_size", help="How many chunks each subprocess will keep in memory", type=int, nargs="?", const=1, default=200)
 
 parser.add_argument("--mode", help="If 'mean', mean influence of individual train on all examples in test; if 'single' 1 train -> 1 test", default="single")
 parser.add_argument("--dataset_test", help="A dataset on the hf hub. If supplied, returns one score per test instance. Format: username/name", default=None)
@@ -78,7 +78,7 @@ import time
 
 import datasets
 
-from util import tokenize_tulu_dataset
+
 
 
 # TODO we only need to know the lenght of the dataset here
@@ -87,18 +87,13 @@ dataset_train = None
 if args.test:
     dataset_train = torch.zeros(args.test_dataset_size)
 else:
-    if "tulu" in args.dataset_train:
-        dataset_train = tokenize_tulu_dataset(args.dataset_train, args.dataset_train_split)
-    else:
-        dataset_train = load_dataset(args.dataset_train, split=args.dataset_train_split)
+
+    dataset_train = load_dataset(args.dataset_train, split=args.dataset_train_split)
         
 dataset_test = None
 
 if args.dataset_test is not None:
-    if "tulu" in args.dataset_test:
-        dataset_test = tokenize_tulu_dataset(args.dataset_test, args.dataset_test_split)
-    else:
-        dataset_test = load_dataset(args.dataset_test, split=args.dataset_test_split)
+    dataset_test = load_dataset(args.dataset_test, split=args.dataset_test_split)
 else:
     dataset_test = dataset_train
 
@@ -137,7 +132,7 @@ def calc_partial(tasks, subtasks,completion_times_influence, einsum_times_influe
     
 
     with torch.no_grad():
-        chunks_a = None
+        
      
         start_time = time.time()
       
@@ -145,8 +140,14 @@ def calc_partial(tasks, subtasks,completion_times_influence, einsum_times_influe
         load_fn = lambda chunk_path: torch.load(chunk_path, weights_only=True, map_location=device).flatten(1)
 
         # chunks_a = [(load_fn(task[0]), task[1], task[2]) for task in tasks]
+        chunks_a = []
         with ThreadPoolExecutor(max_workers=50) as executor:
             chunks_a = list(executor.map(lambda task: (load_fn(task[0]), task[1], task[2]), tasks))
+
+        chunks_b = []
+        if args.keep_dataset_test_in_memory:
+            with ThreadPoolExecutor(max_workers=50) as executor:
+                chunks_b = list(executor.map(lambda task: (load_fn(subtask[0]), subtask[1], subtask[2]), subtasks))
 
 
         logging.info(f"Time to load task: {time.time() - start_time:.4f} seconds")

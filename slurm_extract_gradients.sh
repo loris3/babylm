@@ -7,7 +7,7 @@
 #SBATCH --ntasks=1
 #SBATCH --mem=250G
 #SBATCH --cpus-per-task=24
-#SBATCH --nodelist=dgx-h100-em2
+#SBATCH --nodelist=dgx-h100-em2,dgx1
 source /etc/profile.d/modules.sh
 
 # Create a permanent environment with the name "my_new_permanent_environment"
@@ -24,7 +24,7 @@ module load miniforge
 
 
 
-conda env update --file environment.yaml
+# conda env update --file environment.yaml
 
 # Run your python script
 python extract_gradients.py $1 $2 $3 --dataset_split=$4 --paradigm=$5

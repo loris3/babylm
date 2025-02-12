@@ -36,8 +36,8 @@ parser.add_argument("model", help="A model on the hf hub. Format: username/name_
 parser.add_argument("dataset", help="A dataset on the hf hub. Format: username/name")
 parser.add_argument("--dataset_split", help="The split to access", default="train")
 parser.add_argument("checkpoint_nr", help="Id of the checkpoint to extract gradients for (starting at 0)",type=int)
-parser.add_argument("--num_processes_gradients", help="Number of processes to use when obtaining gradients (one model per process)", type=int, nargs="?", const=1, default=4) # 12 w 4 gpus -> 3 models per gpu
-parser.add_argument("--gradients_per_file", help="Number of gradients per output file", type=int, nargs="?", const=1, default=1000) # ~7.4 GB per file for BERT
+parser.add_argument("--num_processes_gradients", help="Number of processes to use when obtaining gradients (one model per process)", type=int, nargs="?", const=1, default=12) # Bert: 12 w 4 gpus -> 3 models per gpu
+parser.add_argument("--gradients_per_file", help="Number of gradients per output file", type=int, nargs="?", const=1, default=10000) # 10000 = ~7.4 GB per file for BERT
 parser.add_argument("--paradigm", help="Eiter 'pre', 'mlm', or 'sft'", default="mlm")
 
 args = parser.parse_args()

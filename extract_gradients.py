@@ -40,7 +40,7 @@ parser.add_argument("--num_processes_gradients", help="Number of processes to us
 parser.add_argument("--gradients_per_file", help="Number of gradients per output file", type=int, nargs="?", const=1, default=10000) # 10000 = ~7.4 GB per file for BERT
 parser.add_argument("--paradigm", help="Eiter 'pre', 'mlm', or 'sft'", default="mlm")
 parser.add_argument("--gradients_output_path", help="The path where to store gradients at", default="./gradients")
-
+parser.add_argument("--mode", help="Eiter 'store', or 'store_mean'", default="store")
 args = parser.parse_args()
 
 
@@ -112,7 +112,7 @@ def get_for_checkpoint(checkpoint_path, i_start, i_end, completion_times_gradien
     try:
         gpu_id = gpu_queue.get()
         out_dir = os.path.join(gradient_output_dir, os.path.basename(checkpoint_path))
-        out_path = os.path.join(gradient_output_dir, os.path.basename(checkpoint_path),str(i_start) + "_" + str(i_end))
+        out_path = os.path.join(gradient_output_dir, os.path.basename(checkpoint_path), "mean") if args.mode == "store_mean" else os.path.join(gradient_output_dir, os.path.basename(checkpoint_path),str(i_start) + "_" + str(i_end))
         os.makedirs(out_dir,exist_ok=True)
         if os.path.isfile(out_path):
             gpu_queue.put(gpu_id)
@@ -141,7 +141,10 @@ def get_for_checkpoint(checkpoint_path, i_start, i_end, completion_times_gradien
         torch.cuda.empty_cache()
         gpu_queue.put(gpu_id)
                
-        torch.save( gradients, out_path)
+        if args.mode == "store":
+            torch.save( gradients, out_path)
+        else:
+            return torch.sum(gradients, axis=0, dtype=torch.float64)
         del gradients
         
         
@@ -248,8 +251,8 @@ if __name__ == '__main__':
     checkpoint = checkpoints[args.checkpoint_nr]
     
     out_path = os.path.join(gradient_output_dir, os.path.basename(checkpoint))
-   
-    if os.path.isfile(out_path):
+
+    if args.mode == "store_mean" and os.path.isfile(os.path.join(out_path,"mean")):
         logging.info("Skipping {}, already calculated".format(out_path) )
     else:
       
@@ -269,5 +272,11 @@ if __name__ == '__main__':
             time.sleep(10)  
         
         logging.info("Got gradients for checkpoint-{}".format(checkpoint))
+
+        if args.mode == "store_mean":
+            results = r.get()
+            t = torch.stack(results).sum(axis=0) / len(dataset)
+            torch.save(t, os.path.join(out_path, "mean"))
+
     pool_gradients.close()
     pool_gradients.join()

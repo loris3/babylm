@@ -8,11 +8,12 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --nodelist=dgx-h100-em2,dgx1
 source /etc/profile.d/modules.sh
-
-
+export ENV_MODE="permanent"
+export ENV_NAME="babylm_venv"
+module load miniforge
 checkpoint_name=$(python get_checkpoint_name.py $1 $2)
+module purge
 
-
-rm -rf ./gradients/$3/$4/$5/$checkpoint_name
+#rm -rf ./gradients/$3/$4/$5/$checkpoint_name
  
 

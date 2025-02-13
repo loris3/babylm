@@ -85,10 +85,10 @@ def main():
         for train_dataset_split in [args.dataset_train_split + f"[{i}:{i + 100 // args.superbatches}%]" for i in range(0, 100, 100 // args.superbatches)]:
             # gradient extraction
             if len(prev_job_ids_gpu_res) == args.max_concurrent_gradient_extraction_scripts: # add dependency if more than n gradient extraction scripts are scheduled 
-                dependency = f"--dependency=afterany:{prev_job_ids_gpu_res[0]},afterok:{":".join(job_ids_test_sets)}"+ (":"+cleanup_job_id if cleanup_job_id is not None else "")
+                dependency = f"--dependency=afterany:{prev_job_ids_gpu_res[0]},afterok:{':'.join(job_ids_test_sets)}" + (":"+cleanup_job_id if cleanup_job_id is not None else "")
                 prev_job_ids_gpu_res = prev_job_ids_gpu_res[1:]
             else:
-                dependency = f"--dependency=afterok:{test_gradients_job_id}" + (":"+cleanup_job_id if cleanup_job_id is not None else "")
+                dependency = f"--dependency=afterok:{test_gradients_job_id}"  + (":"+cleanup_job_id if cleanup_job_id is not None else "")
             
             extract_command = [
                 "sbatch",
@@ -119,7 +119,7 @@ def main():
             # per superbatch
             job_ids_test_set_influence = []
             for test_dataset_name, test_dataset_split in test_datasets:
-                dependency = f"--dependency=afterok:{job_id}:{":".join(job_ids_test_sets)}"
+                dependency = f"--dependency=afterok:{job_id}:{':'.join(job_ids_test_sets)}"
                 influence_command = [
                     "sbatch",
                     "--nice=10",
@@ -145,7 +145,7 @@ def main():
                 job_ids_test_set_influence.append(job_id)
 
             # cleanup after superbatch
-            dependency = f"--dependency=afterok:{":".join(job_ids_test_set_influence)}"
+            dependency = f"--dependency=afterok:{':'.join(job_ids_test_set_influence)}"
             cleanup_command = [
                 "sbatch",
                 "--nice=10",
@@ -168,7 +168,7 @@ def main():
                 cleanup_process = subprocess.run(cleanup_command, stdout=subprocess.PIPE, text=True, check=True)
                 cleanup_job_id = cleanup_process.stdout.strip().split()[-1] # get SLURM job ID 
             
-
+            break
        
 if __name__ == "__main__":
     main()

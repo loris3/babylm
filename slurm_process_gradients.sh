@@ -1,4 +1,4 @@
-#!/bin/bash
+x#!/bin/bash
 # script name: extract_gradients.sh
 #SBATCH --job-name="influence computation"
 #SBATCH --comment="Training Data Influence Experiments. Runs after gradient extraction for checkpoint $3"

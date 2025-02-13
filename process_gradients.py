@@ -26,12 +26,11 @@ parser.add_argument("--mode", help="If 'mean', mean influence of individual trai
 parser.add_argument("--dataset_test", help="A dataset on the hf hub. If supplied, returns one score per test instance. Format: username/name", default=None)
 parser.add_argument("--dataset_test_split", help="The split to access", default="test")
 
+parser.add_argument("--delete_test_on_success", default=False, action='store_true')
+parser.add_argument("--delete_train_on_success", default=False, action='store_true')
 
 parser.add_argument("--test", help="The split to access", default=False)
 parser.add_argument("--test_dataset_size", help="The split to access", default=0, type=int)
-
-
-parser.add_argument("--gradients_output_path", help="The path where to get the gradients from", default="./gradients")
 args = parser.parse_args()
 
 import json
@@ -45,7 +44,7 @@ dataset_test_name = args.dataset_train.split("/")[-1]
 dataset_test_split_name = args.dataset_test_split
 
 
-gradient_output_dir_train = os.path.join(args.gradients_output_path, model_name, dataset_train_name, dataset_train_split_name)
+gradient_output_dir_train = os.path.join("./gradients", model_name, dataset_train_name, dataset_train_split_name)
 gradient_output_dir_test = os.path.join("./gradients", model_name, dataset_test_name, dataset_test_split_name)
 
 influence_dir = "./influence" if args.mode == "single" else "./mean_influence"
@@ -140,19 +139,13 @@ def calc_partial(tasks, subtasks,completion_times_influence, einsum_times_influe
         start_time = time.time()
       
         # load task (of batch_size chunks)
-        load_fn = lambda chunk_path: torch.load(chunk_path, weights_only=True, map_location=device).flatten(1)
+        load_fn = lambda chunk_path: torch.load(chunk_path,weights_only=True).to(torch.float64).flatten(1)
 
         # chunks_a = [(load_fn(task[0]), task[1], task[2]) for task in tasks]
         chunks_a = []
         with ThreadPoolExecutor(max_workers=50) as executor:
             chunks_a = list(executor.map(lambda task: (load_fn(task[0]), task[1], task[2]), tasks))
-
-        chunks_b = []
-        if args.keep_dataset_test_in_memory:
-            with ThreadPoolExecutor(max_workers=50) as executor:
-                chunks_b = list(executor.map(lambda task: (load_fn(subtask[0]), subtask[1], subtask[2]), subtasks))
-
-
+        
         logging.info(f"Time to load task: {time.time() - start_time:.4f} seconds")
         print(f"Time to load task: {time.time() - start_time:.4f} seconds", flush=True)
         
@@ -172,35 +165,13 @@ def calc_partial(tasks, subtasks,completion_times_influence, einsum_times_influe
             completion_times_influence.append(time.time() - start_time)
             return results
         else:
-
-            mean_gradient_test = 
-            for chunk_path_b,start_id_b, stop_id_b in subtasks:
-                chunk_b = load_cached(chunk_path_b)
-                start_time_einsum = time.time()
-                # TC
-
-
-
-            results = [torch.zeros((chunk_a.shape[0])).to(device) for chunk_a,_,_ in chunks_a]
-            tasks_paths = list(zip(*tasks))[0]
-            def load_cached(chunk_path):
-                if chunk_path in tasks_paths:
-                    return chunks_a[tasks_paths.index(chunk_path)][0]
-                else:
-                    return torch.load(chunk_path, weights_only=True, map_location=device).flatten(1)
-
-            for chunk_path_b,start_id_b, stop_id_b in subtasks:
-                chunk_b = load_cached(chunk_path_b)
-                start_time_einsum = time.time()
-                for i, (chunk_a, _,_) in enumerate(chunks_a):
-                    s = torch.einsum("ij,kj->i", chunk_a, chunk_b)
-                    if args.test:  
-                        b = torch.matmul(chunk_a, chunk_b.T).sum(dim=1)
-                        assert torch.allclose(s,b)
-
-                    results[i]  += s
-                einsum_times_influence.append(time.time() - start_time_einsum)
-            logging.info(f"Time to einsum: {time.time() - start_time:.4f} seconds; {(time.time() - start_time)/len(subtasks):.4f} s/chunk")
+            assert len(subtasks) == 1
+            
+            start_time_einsum = time.time()
+            chunk_b = torch.load(subtasks[0][0],weights_only=False).to(torch.float64).flatten(0)
+            results = [torch.mv(chunk_a, chunk_b) for i, (chunk_a, _,_) in enumerate(chunks_a)]
+            einsum_times_influence.append(time.time() - start_time_einsum)
+            logging.info(f"Time to einsum: {time.time() - start_time:.4f} seconds; {(time.time() - start_time):.4f} s/chunk")
             completion_times_influence.append(time.time() - start_time)
             return (tasks, results)
 
@@ -279,13 +250,16 @@ if __name__ == '__main__':
             tasks.append((chunk_path_a,start_id_a, stop_id_a, ))
 
         subtasks = []
-        chunks_test = [ os.path.join(gradient_output_dir_test, os.path.basename(checkpoint), str(i) + "_" + str(i + args.gradients_per_file)) for i in range(0, len(dataset_test), args.gradients_per_file)]
+        if args.mode == "single":
+            chunks_test = [ os.path.join(gradient_output_dir_test, os.path.basename(checkpoint), str(i) + "_" + str(i + args.gradients_per_file)) for i in range(0, len(dataset_test), args.gradients_per_file)]
 
-        for chunk_path_b in chunks_test:
-            start_id_b, stop_id_b = os.path.basename(chunk_path_b).split( "_")
-            start_id_b = int(start_id_b)
-            stop_id_b = int(stop_id_b)
-            subtasks.append((chunk_path_b,start_id_b, stop_id_b, ))
+            for chunk_path_b in chunks_test:
+                start_id_b, stop_id_b = os.path.basename(chunk_path_b).split( "_")
+                start_id_b = int(start_id_b)
+                stop_id_b = int(stop_id_b)
+                subtasks.append((chunk_path_b,start_id_b, stop_id_b, ))
+        else:
+            subtasks = [(os.path.join(gradient_output_dir_test, os.path.basename(checkpoint), "mean"),0,1)]
 
         for tasks in batch(tasks, args.batch_size):
             jobs.append((tasks, subtasks,completion_times_influence, einsum_times_influence))
@@ -319,22 +293,24 @@ if __name__ == '__main__':
         if args.mode == "single":
             for result, start_id_a, stop_id_a, start_id_b, stop_id_b in results[0]:
                 result_checkpoint[start_id_a:start_id_a+result.shape[0], start_id_b:start_id_b+result.shape[1]] = result
+            
         else:
             for rr in results:
                 for task, result in zip(*rr):
                     chunk_path_a, start_id_a, stop_id_a = task
                     print("chunk_path_a, start_id_a, stop_id_a",chunk_path_a, start_id_a, stop_id_a)
                     result_checkpoint[start_id_a:(start_id_a + result.shape[0])] += result #  the stop_ids are taken from the task description in if.ipynb and can therefore be higher than the actual lenght
-            result_checkpoint = (result_checkpoint / len(dataset_test)).unsqueeze(0)   
+        result_checkpoint = (result_checkpoint / len(dataset_test)).unsqueeze(0)   
             
     
         # result_checkpoint = (result_checkpoint / len(dataset_test)).unsqueeze(0)   
         torch.save(result_checkpoint, out_path)
         logging.info("Saved influence for checkpoint".format(out_path))
         # logging.info("Deleting gradients for {}".format(checkpoint))
-        
-        # shutil.rmtree(gradient_output_dir_train, ignore_errors=True)
-        # shutil.rmtree(gradient_output_dir_test, ignore_errors=True)
+        if args.delete_train_on_success:
+            shutil.rmtree(gradient_output_dir_train, ignore_errors=True)
+        if args.delete_test_on_success:
+            shutil.rmtree(gradient_output_dir_test, ignore_errors=True)
         
     pool_merge.close()
     pool_merge.join()

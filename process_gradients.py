@@ -29,6 +29,9 @@ parser.add_argument("--dataset_test_split", help="The split to access", default=
 
 parser.add_argument("--test", help="The split to access", default=False)
 parser.add_argument("--test_dataset_size", help="The split to access", default=0, type=int)
+
+
+parser.add_argument("--gradients_output_path", help="The path where to get the gradients from", default="./gradients")
 args = parser.parse_args()
 
 import json
@@ -42,7 +45,7 @@ dataset_test_name = args.dataset_train.split("/")[-1]
 dataset_test_split_name = args.dataset_test_split
 
 
-gradient_output_dir_train = os.path.join("./gradients", model_name, dataset_train_name, dataset_train_split_name)
+gradient_output_dir_train = os.path.join(args.gradients_output_path, model_name, dataset_train_name, dataset_train_split_name)
 gradient_output_dir_test = os.path.join("./gradients", model_name, dataset_test_name, dataset_test_split_name)
 
 influence_dir = "./influence" if args.mode == "single" else "./mean_influence"
@@ -169,6 +172,15 @@ def calc_partial(tasks, subtasks,completion_times_influence, einsum_times_influe
             completion_times_influence.append(time.time() - start_time)
             return results
         else:
+
+            mean_gradient_test = 
+            for chunk_path_b,start_id_b, stop_id_b in subtasks:
+                chunk_b = load_cached(chunk_path_b)
+                start_time_einsum = time.time()
+                # TC
+
+
+
             results = [torch.zeros((chunk_a.shape[0])).to(device) for chunk_a,_,_ in chunks_a]
             tasks_paths = list(zip(*tasks))[0]
             def load_cached(chunk_path):

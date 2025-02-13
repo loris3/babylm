@@ -39,6 +39,7 @@ parser.add_argument("checkpoint_nr", help="Id of the checkpoint to extract gradi
 parser.add_argument("--num_processes_gradients", help="Number of processes to use when obtaining gradients (one model per process)", type=int, nargs="?", const=1, default=12) # Bert: 12 w 4 gpus -> 3 models per gpu
 parser.add_argument("--gradients_per_file", help="Number of gradients per output file", type=int, nargs="?", const=1, default=10000) # 10000 = ~7.4 GB per file for BERT
 parser.add_argument("--paradigm", help="Eiter 'pre', 'mlm', or 'sft'", default="mlm")
+parser.add_argument("--gradients_output_path", help="The path where to store gradients at", default="./gradients")
 
 args = parser.parse_args()
 
@@ -48,7 +49,7 @@ dataset_name = args.dataset.split("/")[-1]
 dataset_split_name = args.dataset_split
 
 # create output dirs
-gradient_output_dir = os.path.join("./gradients", model_name, dataset_name, dataset_split_name)
+gradient_output_dir = os.path.join(args.gradients_output_path, model_name, dataset_name, dataset_split_name)
 if not os.path.exists(gradient_output_dir):
     os.makedirs(gradient_output_dir)
 # influence_output_dir = os.path.join("./influence", model_name, dataset_name, dataset_split_name) # this script skips computing existing results

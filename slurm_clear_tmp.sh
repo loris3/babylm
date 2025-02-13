@@ -5,7 +5,7 @@
 #SBATCH --time=0-00:05:00
 #SBATCH --ntasks=1
 #SBATCH --mem=1GB
-#SBATCH --cpus-per-task=2
+#SBATCH --cpus-per-task=1
 #SBATCH --nodelist=dgx-h100-em2
 
 source /etc/profile.d/modules.sh
@@ -22,6 +22,14 @@ ls -lha $TMPDIR
 # rm -rf $TMPDIR/gradients
 df -h $TMPDIR
 
+# ls -lha /srv/localstorage/$USER
+
+# df -h /srv/localstorage/$USER
+
+
+# ls -lha /srv/environments/$USER
+
+# df -h /srv/environments/$USER
 # # df -h $TMPDIR/gradients
 
 # conda env update --file environment.yml

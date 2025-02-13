@@ -31,7 +31,6 @@ def main():
     dataset_test_split  = args.dataset_test_split + "[0:100%]" if not "[" in args.dataset_test_split else args.dataset_test_split
 
     prev_job_ids_gradients = []
-    prev_job_ids_influence = []
 
     checkpoint_ids = None
 
@@ -47,8 +46,8 @@ def main():
 
         # first, extract gradients for test dataset (used troughout all superbatches)
         
-        if len(prev_job_ids_influence) > 0: # add dependency: influence computation for last checkpoint is finished
-            dependency = f"--dependency=afterany:{prev_job_ids_influence[-1]}"
+        if len(prev_job_ids_gradients) > 0: # add dependency: influence computation for last checkpoint is finished
+            dependency = f"--dependency=afterany:{prev_job_ids_gradients[-1]}"
         else:
             dependency = ""
 
@@ -73,8 +72,13 @@ def main():
             extract_process = subprocess.run(extract_command, stdout=subprocess.PIPE, text=True, check=True)
             test_gradients_job_id = extract_process.stdout.strip().split()[-1] # get SLURM job ID 
 
+
+
+
         assert 100 % args.superbatches == 0
+      
         for train_dataset_split in [args.dataset_train_split + f"[{i}:{i + 100 // args.superbatches}%]" for i in range(0, 100, 100 // args.superbatches)]:
+            
             # gradient extraction
             if len(prev_job_ids_gradients) == args.max_concurrent_gradient_extraction_scripts: # add dependency if more than n gradient extraction scripts are scheduled 
                 dependency = f"--dependency=afterany:{prev_job_ids_gradients[0]},afterok:{test_gradients_job_id}"
@@ -87,14 +91,18 @@ def main():
             
             extract_command = [
                 "sbatch",
-                f"--job-name={train_dataset_split} gradient extraction for checkpoint {i}",
+                "--nice=10",
+                f"--job-name=aio computation for checkpoint {i}: {train_dataset_split}",
                 dependency,
-                "./slurm_extract_gradients.sh",
+                "./slurm_aio.sh",
                 args.model,
                 args.dataset_train,
-                str(i),
                 train_dataset_split,
+                args.dataset_test,
+                dataset_test_split,
+                str(i),
                 args.paradigm
+
             ]
             extract_command = [c for c in extract_command if c != ""]
             if args.debug:
@@ -107,39 +115,7 @@ def main():
 
             prev_job_ids_gradients.append(job_id)
 
-            ##############
-            # influence computation (dependent)
-            # add dependency if more than n influence compuation scripts are scheduled 
-            if len(prev_job_ids_influence) == args.max_concurrent_influence_computation_scripts:
-                dependency = f"--dependency=afterany:{prev_job_ids_influence[0]},afterok:{job_id},afterok:{test_gradients_job_id}"
-                prev_job_ids_influence = prev_job_ids_influence[1:]
-            else:
-                dependency = f"--dependency=afterok:{job_id}:{test_gradients_job_id}"
-
-        
-            influence_command = [
-                "sbatch",
-                "--nice=10",
-                f"--job-name=influence computation for checkpoint {i} ",
-                dependency,
-                "./slurm_process_gradients.sh",
-                args.model,
-                args.dataset_train,
-                train_dataset_split,
-                args.dataset_test,
-                dataset_test_split,
-                str(i)
-            ]
-            influence_command = [c for c in influence_command if c != ""]
-            if args.debug:
-                influence_command_str = " ".join([c for c in influence_command])
-                print(f"[DEBUG] {influence_command_str}")
-                job_id = f"job_{i}_{train_dataset_split}_influence"  # Mock job ID in args.debug mode
-            else:
-                influence_process = subprocess.run(influence_command, stdout=subprocess.PIPE, text=True, check=True)
-                job_id = influence_process.stdout.strip().split()[-1] # get SLURM job ID 
-
-            prev_job_ids_influence.append(job_id)
+          
        
 if __name__ == "__main__":
     main()

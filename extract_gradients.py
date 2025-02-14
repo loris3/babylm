@@ -200,7 +200,7 @@ if "alpaca" in args.dataset:
 
     paradigm = "pre"
 
-elif "errors" in args.dataset:
+elif ("errors" in args.dataset) or ("olmes" in args.dataset):
 
     def preprocess_tulu_errors(data_sample):
         messages = [

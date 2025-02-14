@@ -31,7 +31,7 @@ def main():
 
 
 
-    test_datasets = [(args.test_datasets[i], args.test_datasets[i+1] + "[0:100%]" if not "[" in args.test_datasets[i+1] else args.test_datasets[i+1]) for i in range(0, len(args.test_datasets), 2)]
+    test_datasets = [(args.test_datasets[i], args.test_datasets[i+1] + "[0%:100%]" if not "[" in args.test_datasets[i+1] else args.test_datasets[i+1]) for i in range(0, len(args.test_datasets), 2)]
 
 
     job_ids_test_sets = []
@@ -55,7 +55,7 @@ def main():
             dependency = ""
             extract_command = [
                 "sbatch",
-                f"--job-name=test set {test_dataset_name}{test_dataset_split} gradient extraction for checkpoint {i}",
+                f"--job-name=test set {test_dataset_name} {test_dataset_split} gradient extraction for checkpoint {i}",
                 dependency,
                 "./slurm_extract_gradients.sh",
                 args.model,

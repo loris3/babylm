@@ -19,7 +19,7 @@ parser.add_argument("dataset_train", help="A dataset on the hf hub. Format: user
 parser.add_argument("--dataset_train_split", help="The split to access", default="train")
 parser.add_argument("checkpoint_nr", help="Id of the checkpoint to extract gradients for (starting at 0)",type=int)
 parser.add_argument("--num_processes", help="Number of processes to use when doing dot product (runs on cpu)", type=int, nargs="?", const=1, default=1)
-parser.add_argument("--gradients_per_file", help="Number of gradients per output file", type=int, nargs="?", const=1, default=10000)
+parser.add_argument("--gradients_per_file", help="Number of gradients per output file", type=int, nargs="?", const=1, default=1000)
 parser.add_argument("--batch_size", help="How many chunks each subprocess will keep in memory", type=int, nargs="?", const=1, default=200)
 
 parser.add_argument("--mode", help="If 'mean', mean influence of individual train on all examples in test; if 'single' 1 train -> 1 test", default="single")
@@ -40,7 +40,7 @@ from datasets import load_dataset
 model_name = args.model.split("/")[-1]
 dataset_train_name = args.dataset_train.split("/")[-1]
 dataset_train_split_name = args.dataset_train_split
-dataset_test_name = args.dataset_train.split("/")[-1]
+dataset_test_name = args.dataset_test.split("/")[-1]
 dataset_test_split_name = args.dataset_test_split
 
 
@@ -131,7 +131,7 @@ def calc_partial(tasks, subtasks,completion_times_influence, einsum_times_influe
 
 
     device = "cpu"
-    
+    print("calc")
 
     with torch.no_grad():
         
@@ -139,10 +139,11 @@ def calc_partial(tasks, subtasks,completion_times_influence, einsum_times_influe
         start_time = time.time()
       
         # load task (of batch_size chunks)
-        load_fn = lambda chunk_path: torch.load(chunk_path,weights_only=True).to(torch.float64).flatten(1)
+        load_fn = lambda chunk_path: torch.load(chunk_path,weights_only=True).flatten(1)
 
         # chunks_a = [(load_fn(task[0]), task[1], task[2]) for task in tasks]
         chunks_a = []
+        print("laoding")
         with ThreadPoolExecutor(max_workers=50) as executor:
             chunks_a = list(executor.map(lambda task: (load_fn(task[0]), task[1], task[2]), tasks))
         
@@ -165,10 +166,11 @@ def calc_partial(tasks, subtasks,completion_times_influence, einsum_times_influe
             completion_times_influence.append(time.time() - start_time)
             return results
         else:
+            print("mean")
             assert len(subtasks) == 1
-            
+            print("subtasks",subtasks)
             start_time_einsum = time.time()
-            chunk_b = torch.load(subtasks[0][0],weights_only=False).to(torch.float64).flatten(0)
+            chunk_b = torch.load(subtasks[0][0],weights_only=False).flatten(0)
             results = [torch.mv(chunk_a, chunk_b) for i, (chunk_a, _,_) in enumerate(chunks_a)]
             einsum_times_influence.append(time.time() - start_time_einsum)
             logging.info(f"Time to einsum: {time.time() - start_time:.4f} seconds; {(time.time() - start_time):.4f} s/chunk")

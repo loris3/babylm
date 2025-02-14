@@ -3,7 +3,7 @@
 #SBATCH --job-name="gradiend extraction"
 #SBATCH --comment="RoBERTa Training Data Influence Experiments."
 #SBATCH --time=0-06:00:00
-#SBATCH --gres=gpu:4
+#SBATCH --gres=gpu:2
 #SBATCH --ntasks=1
 #SBATCH --mem=250G
 #SBATCH --cpus-per-task=24
@@ -27,7 +27,7 @@ module load miniforge
 # conda env update --file environment.yaml
 
 # Run your python script
-python extract_gradients.py $1 $2 $3 --dataset_split=$4 --paradigm=$5 --mode=$6 --num_processes_gradients=4
+python extract_gradients.py $1 $2 $3 --dataset_split=$4 --paradigm=$5 --mode=$6 --num_processes_gradients=2
  
 # Cleanup
 module purge

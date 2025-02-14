@@ -82,7 +82,7 @@ def main():
         # now iterate over the train dataset in "superbatches" and compute influence for each test dataset
         cleanup_job_id = None
         assert 100 % args.superbatches == 0
-        for train_dataset_split in [args.dataset_train_split + f"[{i}:{i + 100 // args.superbatches}%]" for i in range(0, 100, 100 // args.superbatches)]:
+        for train_dataset_split in [args.dataset_train_split + f"[{i}%:{i + 100 // args.superbatches}%]" for i in range(0, 100, 100 // args.superbatches)]:
             # gradient extraction
             if len(prev_job_ids_gpu_res) == args.max_concurrent_gradient_extraction_scripts: # add dependency if more than n gradient extraction scripts are scheduled 
                 dependency = f"--dependency=afterany:{prev_job_ids_gpu_res[0]},afterok:{':'.join(job_ids_test_sets)}" + (":"+cleanup_job_id if cleanup_job_id is not None else "")

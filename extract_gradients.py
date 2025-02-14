@@ -136,13 +136,17 @@ def get_for_checkpoint(checkpoint_path, i_start, i_end, completion_times_gradien
     model.train()
 
     start_time = time.time()
+    print("i_start:i_end",i_start, i_end)
+    print("len(i_start, i_end)", len(dataset[i_start:i_end]))
     gradients = torch.stack([get_loss_gradient(model, example,device).detach().cpu().to(torch.bfloat16) for example in dataset[i_start:i_end]["input_ids"]])#.cpu()
     print(f"Time to get gradients: {time.time() - start_time:.4f} s/chunk", flush=True)
+    print("len(gradients)", gradients.shape)
     del model
     torch.cuda.empty_cache()
     gpu_queue.put(gpu_id)
             
     if args.mode == "store":
+        print("store", out_path, flush=True)
         torch.save( gradients, out_path)
     else:
         return torch.sum(gradients, axis=0, dtype=torch.float64)
@@ -287,6 +291,7 @@ if __name__ == '__main__':
         logging.info("Got gradients for checkpoint-{}".format(checkpoint))
 
         if args.mode == "store_mean":
+            print("store mean", flush=True)
             results = r.get()
             t = torch.stack(results).sum(axis=0) / len(dataset)
             torch.save(t, os.path.join(out_path, "mean"))

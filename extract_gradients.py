@@ -37,7 +37,7 @@ parser.add_argument("dataset", help="A dataset on the hf hub. Format: username/n
 parser.add_argument("--dataset_split", help="The split to access", default="train")
 parser.add_argument("checkpoint_nr", help="Id of the checkpoint to extract gradients for (starting at 0)",type=int)
 parser.add_argument("--num_processes_gradients", help="Number of processes to use when obtaining gradients (one model per process)", type=int, nargs="?", const=1, default=2) # Bert: 12 w 4 gpus -> 3 models per gpu
-parser.add_argument("--gradients_per_file", help="Number of gradients per output file", type=int, nargs="?", const=1, default=1000) # 10000 = ~7.4 GB per file for BERT
+parser.add_argument("--gradients_per_file", help="Number of gradients per output file", type=int, nargs="?", const=1, default=10000) # 10000 = ~7.4 GB per file for BERT
 parser.add_argument("--paradigm", help="Eiter 'pre', 'mlm', or 'sft'", default="mlm")
 parser.add_argument("--gradients_output_path", help="The path where to store gradients at", default="./gradients")
 parser.add_argument("--mode", help="Eiter 'store', or 'store_mean'", default="store")
@@ -200,20 +200,6 @@ if "alpaca" in args.dataset:
     dataset.set_transform(lambda x : tokenizer(create_alpaca_prompt(x), return_special_tokens_mask=True, truncation=True, padding="max_length", max_length=4096))
 
     paradigm = "pre"
-
-elif "errors" in args.dataset:
-
-    def preprocess_tulu_errors(data_sample):
-        messages = [
-            {"role": "user", "content": data_sample["prompt"][0]},
-            {"role": "assistant", "content": data_sample["completion"][0]}
-        ]
-        return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    dataset = load_dataset(args.dataset, split=args.dataset_split) 
-    dataset.set_transform(lambda x : tokenizer([preprocess_tulu_errors(x)],return_special_tokens_mask=False, truncation=True, padding="max_length", max_length=4096,return_tensors="pt"))
-    paradigm = "pre"
-
-
 elif paradigm in ["pre", "mlm"]:
     dataset = load_dataset(args.dataset, split=args.dataset_split)
     if is_conversational(dataset[0]):

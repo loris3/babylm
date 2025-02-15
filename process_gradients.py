@@ -171,7 +171,7 @@ def calc_partial(tasks, subtasks,completion_times_influence, einsum_times_influe
             print("subtasks",subtasks)
             start_time_einsum = time.time()
             chunk_b = torch.load(subtasks[0][0],weights_only=False).flatten(0)
-            results = [torch.mv(chunk_a.to(torch.float64), chunk_b) for i, (chunk_a, _,_) in enumerate(chunks_a)]
+            results = [torch.mv(chunk_a, chunk_b) for i, (chunk_a, _,_) in enumerate(chunks_a)]
             einsum_times_influence.append(time.time() - start_time_einsum)
             logging.info(f"Time to einsum: {time.time() - start_time:.4f} seconds; {(time.time() - start_time):.4f} s/chunk")
             completion_times_influence.append(time.time() - start_time)
@@ -227,7 +227,7 @@ if __name__ == '__main__':
    ###############
   
     out_path = os.path.join(influence_output_dir, os.path.basename(checkpoint))
-    if False and os.path.isfile(out_path):
+    if os.path.isfile(out_path):
         logging.info("Skipping {}, already calculated".format(out_path) )
         
         

@@ -36,7 +36,7 @@ def main():
 
     job_ids_test_sets = []
 
-    prev_job_ids_gpu_res = []
+    # prev_job_ids_gpu_res = []
     checkpoint_ids = None
 
     # hotfix: N+1 checkpoints are created for equitoken datasets, skip the first/include the final model 
@@ -84,11 +84,12 @@ def main():
         assert 100 % args.superbatches == 0
         for train_dataset_split in [args.dataset_train_split + f"[{i}%:{i + 100 // args.superbatches}%]" for i in range(0, 100, 100 // args.superbatches)]:
             # gradient extraction
-            if len(prev_job_ids_gpu_res) == args.max_concurrent_gradient_extraction_scripts: # add dependency if more than n gradient extraction scripts are scheduled 
-                dependency = f"--dependency=afterany:{prev_job_ids_gpu_res[0]},afterok:{':'.join(job_ids_test_sets)}" + (":"+cleanup_job_id if cleanup_job_id is not None else "")
-                prev_job_ids_gpu_res = prev_job_ids_gpu_res[1:]
-            else:
-                dependency = f"--dependency=afterok:{test_gradients_job_id}"  + (":"+cleanup_job_id if cleanup_job_id is not None else "")
+            # print("len(prev_job_ids_gpu_res)", len(prev_job_ids_gpu_res))
+            # if len(prev_job_ids_gpu_res) == args.max_concurrent_gradient_extraction_scripts: # add dependency if more than n gradient extraction scripts are scheduled 
+            #     dependency = f"--dependency=afterany:{prev_job_ids_gpu_res[0]},afterok:{':'.join(job_ids_test_sets)}" + (":"+cleanup_job_id if cleanup_job_id is not None else "")
+            #     prev_job_ids_gpu_res = prev_job_ids_gpu_res[1:]
+            # else:
+            dependency = f"--dependency=afterok:{test_gradients_job_id}" # + (":"+cleanup_job_id if cleanup_job_id is not None else "")
             
             extract_command = [
                 "sbatch",
@@ -100,7 +101,8 @@ def main():
                 str(i),
                 train_dataset_split,
                 args.paradigm,
-                "store"
+                "store",
+
             ]
             extract_command = [c for c in extract_command if c != ""]
             if args.debug:
@@ -111,7 +113,6 @@ def main():
                 extract_process = subprocess.run(extract_command, stdout=subprocess.PIPE, text=True, check=True)
                 job_id = extract_process.stdout.strip().split()[-1] # get SLURM job ID 
 
-            prev_job_ids_gpu_res.append(job_id)
 
             ##############
             # influence computation (dependent)
@@ -149,7 +150,7 @@ def main():
             cleanup_command = [
                 "sbatch",
                 "--nice=10",
-                f"--job-name=cleanup for batch {args.dataset_train}{train_dataset_split} ",
+                f"--job-name=cleanup for batch {args.dataset_train} {train_dataset_split} ",
                 dependency,
                 "./slurm_cleanup.sh",
                 args.model,
@@ -168,7 +169,7 @@ def main():
                 cleanup_process = subprocess.run(cleanup_command, stdout=subprocess.PIPE, text=True, check=True)
                 cleanup_job_id = cleanup_process.stdout.strip().split()[-1] # get SLURM job ID 
             
-            break
+       
        
 if __name__ == "__main__":
     main()

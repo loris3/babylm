@@ -41,6 +41,7 @@ parser.add_argument("--gradients_per_file", help="Number of gradients per output
 parser.add_argument("--paradigm", help="Eiter 'pre', 'mlm', or 'sft'", default="mlm")
 parser.add_argument("--gradients_output_path", help="The path where to store gradients at", default="./gradients")
 parser.add_argument("--mode", help="Eiter 'store', or 'store_mean'", default="store")
+parser.add_argument("--skip_if_gradient_folder_exists", default=False, action='store_true')
 args = parser.parse_args()
 
 
@@ -149,7 +150,7 @@ def get_for_checkpoint(checkpoint_path, i_start, i_end, completion_times_gradien
         print("store", out_path, flush=True)
         torch.save( gradients, out_path)
     else:
-        return torch.sum(gradients, axis=0, dtype=torch.float64)
+        return torch.sum(gradients, axis=0)
     del gradients
     
     
@@ -206,14 +207,20 @@ if "alpaca" in args.dataset:
 
 elif ("errors" in args.dataset) or ("olmes" in args.dataset):
 
-    def preprocess_tulu_errors(data_sample):
-        messages = [
-            {"role": "user", "content": data_sample["prompt"][0]},
-            {"role": "assistant", "content": data_sample["completion"][0]}
+    def preprocess_tulu_errors_batched(data_samples):
+        prompts = data_samples["prompt"]
+        completions = data_samples["completion"]
+        batched_messages = [
+            [
+                {"role": "user", "content": prompt},
+                {"role": "assistant", "content": completion}
+            ]
+            for prompt, completion in zip(prompts, completions) 
         ]
-        return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        
+        return [tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True) for messages in batched_messages]
     dataset = load_dataset(args.dataset, split=args.dataset_split) 
-    dataset.set_transform(lambda x : tokenizer([preprocess_tulu_errors(x)],return_special_tokens_mask=False, truncation=True, padding="max_length", max_length=4096,return_tensors="pt"))
+    dataset.set_transform(lambda x : tokenizer(preprocess_tulu_errors_batched(x),return_special_tokens_mask=False, truncation=True, padding="max_length", max_length=4096,return_tensors="pt"))
     paradigm = "pre"
 
 
@@ -268,9 +275,11 @@ if __name__ == '__main__':
     checkpoint = checkpoints[args.checkpoint_nr]
     
     out_path = os.path.join(gradient_output_dir, os.path.basename(checkpoint))
-
+    print("out_path",out_path, flush=True)
     if args.mode == "store_mean" and os.path.isfile(os.path.join(out_path,"mean")):
         logging.info("Skipping {}, already calculated".format(out_path) )
+    elif args.mode == "store" and os.path.isdir(out_path) and len(os.listdir(out_path)) == 0 and args.skip_if_gradient_folder_exists:
+        logging.info("Skipping {}, because folder exists (--skip_if_gradient_folder_exists) and is empty".format(out_path) )
     else:
       
         run = wandb.init(project="babylm_gradient_extraction")

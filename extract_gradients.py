@@ -212,7 +212,7 @@ elif ("errors" in args.dataset) or ("olmes" in args.dataset):
         completions = data_samples["completion"]
         batched_messages = [
             [
-                {"role": "user", "content": prompt},
+                {"role": "user", "content": prompt if prompt is not None else ""},
                 {"role": "assistant", "content": completion if completion is not None else ""}
             ]
             for prompt, completion in zip(prompts, completions) 

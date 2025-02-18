@@ -212,8 +212,8 @@ elif ("errors" in args.dataset) or ("olmes" in args.dataset):
         completions = data_samples["completion"]
         batched_messages = [
             [
-                {"role": "user", "content": prompt},
-                {"role": "assistant", "content": completion}
+                {"role": "user", "content": prompt if prompt is not None else ""},
+                {"role": "assistant", "content": completion if completion is not None else ""}
             ]
             for prompt, completion in zip(prompts, completions) 
         ]
@@ -226,7 +226,7 @@ elif ("errors" in args.dataset) or ("olmes" in args.dataset):
 
 elif paradigm in ["pre", "mlm"]:
     dataset = load_dataset(args.dataset, split=args.dataset_split)
-    if is_conversational(dataset[0]):
+    if "text" not in dataset:
         dataset.set_transform(lambda x : tokenizer(apply_chat_template(x, tokenizer=tokenizer)["text"], return_special_tokens_mask=True, truncation=True, padding="max_length", max_length=4096 if "OLMo" in args.model else 512))
 
     else:   

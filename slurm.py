@@ -124,7 +124,7 @@ def main():
                 influence_command = [
                     "sbatch",
                     "--nice=10",
-                    f"--job-name=influence computation for checkpoint {i} ",
+                    f"--job-name=influence computation for {train_dataset_split} checkpoint {i} ",
                     dependency,
                     "./slurm_process_gradients.sh",
                     args.model,
@@ -150,7 +150,7 @@ def main():
             cleanup_command = [
                 "sbatch",
                 "--nice=10",
-                f"--job-name=cleanup for batch {args.dataset_train} {train_dataset_split} ",
+                f"--job-name=cleanup for {train_dataset_split} ",
                 dependency,
                 "./slurm_cleanup.sh",
                 args.model,

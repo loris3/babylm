@@ -14,6 +14,6 @@ module load miniforge
 checkpoint_name=$(python get_checkpoint_name.py $1 $2)
 module purge
 
-rm -rf ./gradients/$3/$4/$5/$checkpoint_name
+rm -rf ./gradients/$3/$4/$5/$checkpoint_name/*
  
 

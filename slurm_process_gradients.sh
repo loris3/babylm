@@ -4,7 +4,7 @@
 #SBATCH --comment="Training Data Influence Experiments. Runs after gradient extraction for checkpoint $3"
 #SBATCH --time=0-02:00:00
 #SBATCH --ntasks=1
-#SBATCH --mem=500GB
+#SBATCH --mem=350GB
 #SBATCH --cpus-per-task=24
 #SBATCH --nodelist=dgx-h100-em2
 

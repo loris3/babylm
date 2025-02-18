@@ -36,4 +36,7 @@ babylm_data_preprocessing
 influence.tar
 gradients_temp/*
 tulu_splitting.ipynb
+results_confidence/
+OLMo-2-1124-7B-SFT.tar
+test
 OLMo-2-1124-7B-SFT.tar

@@ -1,11 +1,11 @@
 #!/bin/bash
 # script name: extract_gradients.sh
 #SBATCH --job-name="influence computation"
-#SBATCH --comment="Training Data Influence Experiments. Loads gradients from network share DIRECTLY TO RAM"
-#SBATCH --time=0-06:00:00
+#SBATCH --comment="Calculation of training data influence. Loads gradients from network share to /tmp/gradients, assumes /tmp is cleared after job completion"
+#SBATCH --time=0-02:00:00
 #SBATCH --ntasks=1
 #SBATCH --mem=325GB
-#SBATCH --cpus-per-task=12
+#SBATCH --cpus-per-task=32
 #SBATCH --nodelist=galadriel,dgx-h100-em2
 source /etc/profile.d/modules.sh
 
@@ -26,8 +26,5 @@ module load miniforge
 # conda env update --file environment.yml
 
 # Run your python script
-python process_gradients.py $1 $2 $6 --dataset_train_split=$3 --dataset_test=$4 --dataset_test_split=$5 --mode=mean  --batch_size=10
- 
-# Cleanup
-module purge
+
 

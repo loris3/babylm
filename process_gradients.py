@@ -110,10 +110,11 @@ import util
 
 ##########################################
 
-
+import shutil
 import torch 
 import time
 from concurrent.futures import ThreadPoolExecutor
+import random
 
 def calc_partial(tasks, subtasks,completion_times_influence, einsum_times_influence):
     """Calculates mean TracinCP influence for the items in each chunk in `tasks` on all other items in the training data. Effectively just does items.dot(items.T).mean() but in batches.
@@ -139,12 +140,22 @@ def calc_partial(tasks, subtasks,completion_times_influence, einsum_times_influe
         start_time = time.time()
       
         # load task (of batch_size chunks)
-        load_fn = lambda chunk_path: torch.load(chunk_path,weights_only=True).flatten(1)
+        def load_fn(chunk_path): 
+            cache_path = os.path.join("/tmp/gradients/",chunk_path)
+            while True:
+                try:
+                    return torch.load(cache_path,weights_only=True).flatten(1)
+                except:
+                   
+                    os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+                  
+                    if not os.path.isfile(cache_path):
+                        shutil.copyfile(chunk_path, cache_path)
 
         # chunks_a = [(load_fn(task[0]), task[1], task[2]) for task in tasks]
         chunks_a = []
         print("laoding")
-        with ThreadPoolExecutor(max_workers=50) as executor:
+        with ThreadPoolExecutor(max_workers=32) as executor:
             chunks_a = list(executor.map(lambda task: (load_fn(task[0]), task[1], task[2]), tasks))
         
         logging.info(f"Time to load task: {time.time() - start_time:.4f} seconds")
@@ -300,7 +311,7 @@ if __name__ == '__main__':
             for rr in results:
                 for task, result in zip(*rr):
                     chunk_path_a, start_id_a, stop_id_a = task
-                    print("chunk_path_a, start_id_a, stop_id_a",chunk_path_a, start_id_a, stop_id_a)
+                    print("chunk_path_a, start_id_a, stop_id_a",chunk_path_a, start_id_a, stop_id_a, flush=True)
                     result_checkpoint[start_id_a:(start_id_a + result.shape[0])] += result #  the stop_ids are taken from the task description in if.ipynb and can therefore be higher than the actual lenght
         result_checkpoint = (result_checkpoint / len(dataset_test)).unsqueeze(0)   
             

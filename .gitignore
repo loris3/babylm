@@ -40,3 +40,5 @@ results_confidence/
 OLMo-2-1124-7B-SFT.tar
 test
 OLMo-2-1124-7B-SFT.tar
+slurm_process_gradients_combined.sh
+start_jupyterlab.sbatch

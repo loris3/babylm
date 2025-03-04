@@ -83,12 +83,13 @@ def main():
         cleanup_job_ids = []
         assert 100 % args.superbatches == 0
         for train_dataset_split in [args.dataset_train_split + f"[{i}%:{i + 100 // args.superbatches}%]" for i in range(0, 100, 100 // args.superbatches)]:
-            
+            if train_dataset_split != "train[23%:24%]":
+                continue
             # gradient extraction for superbatch
             dependency = f"--dependency=afterok:{test_gradients_job_id}"  # at most max_precompute_superbatches gradient extraction jobs
-            if len(cleanup_job_ids) >= args.max_precompute_superbatches:
-                dependency += ":"+cleanup_job_ids[0]
-                cleanup_job_ids = cleanup_job_ids[args.max_precompute_superbatches:]
+            # if len(cleanup_job_ids) >= args.max_precompute_superbatches:
+            #     dependency += ":"+cleanup_job_ids[0]
+            #     cleanup_job_ids = cleanup_job_ids[args.max_precompute_superbatches:]
 
             extract_command = [
                 "sbatch",

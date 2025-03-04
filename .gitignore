@@ -42,3 +42,4 @@ test
 OLMo-2-1124-7B-SFT.tar
 slurm_process_gradients_combined.sh
 start_jupyterlab.sbatch
+mean_influence_divided_by_len_test/*

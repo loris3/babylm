@@ -306,14 +306,14 @@ if __name__ == '__main__':
         if args.mode == "single":
             for result, start_id_a, stop_id_a, start_id_b, stop_id_b in results[0]:
                 result_checkpoint[start_id_a:start_id_a+result.shape[0], start_id_b:start_id_b+result.shape[1]] = result
-            
+            result_checkpoint = (result_checkpoint / len(dataset_test)).unsqueeze(0) 
         else:
             for rr in results:
                 for task, result in zip(*rr):
                     chunk_path_a, start_id_a, stop_id_a = task
                     print("chunk_path_a, start_id_a, stop_id_a",chunk_path_a, start_id_a, stop_id_a, flush=True)
                     result_checkpoint[start_id_a:(start_id_a + result.shape[0])] += result #  the stop_ids are taken from the task description in if.ipynb and can therefore be higher than the actual lenght
-        result_checkpoint = (result_checkpoint / len(dataset_test)).unsqueeze(0)   
+            result_checkpoint = result_checkpoint.unsqueeze(0) 
             
     
         # result_checkpoint = (result_checkpoint / len(dataset_test)).unsqueeze(0)   

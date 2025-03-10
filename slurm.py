@@ -34,7 +34,7 @@ def main():
     test_datasets = [(args.test_datasets[i], args.test_datasets[i+1] + "[0%:100%]" if not "[" in args.test_datasets[i+1] else args.test_datasets[i+1]) for i in range(0, len(args.test_datasets), 2)]
 
 
-    job_ids_test_sets = []
+    
 
 
     checkpoint_ids = None
@@ -48,7 +48,7 @@ def main():
 
     for i in checkpoint_ids:
 
-
+        job_ids_test_sets = []
         # first, extract gradients for test datasets (used troughout all superbatches)
         
         for test_dataset_name, test_dataset_split in test_datasets:
@@ -57,7 +57,7 @@ def main():
                 "sbatch",
                 f"--job-name=Extracting gradients for {test_dataset_name} {test_dataset_split} (checkpoint {i})",
                 dependency,
-                "./slurm_extract_gradients.sh",
+                "./slurm_extract_gradients_olmo.sh" if "OLMo" in args.model else "./slurm_extract_gradients_babylm.sh",
                 args.model,
                 test_dataset_name,
                 str(i),
@@ -83,8 +83,12 @@ def main():
         cleanup_job_ids = []
         assert 100 % args.superbatches == 0
         for train_dataset_split in [args.dataset_train_split + f"[{i}%:{i + 100 // args.superbatches}%]" for i in range(0, 100, 100 // args.superbatches)]:
-            if train_dataset_split != "train[23%:24%]":
-                continue
+
+            # if train_dataset_split not in ["train[19%:20%]", "train[20%:21%]", "train[21%:22%]", "train[34%:35%]","train[35%:36%]", "train[36%:37%]", "train[37%:38%]"]:
+            #     print("skipping", train_dataset_split)
+            #     continue
+            # if train_dataset_split == "train[64%:65%]":
+            #     break
             # gradient extraction for superbatch
             dependency = f"--dependency=afterok:{test_gradients_job_id}"  # at most max_precompute_superbatches gradient extraction jobs
             # if len(cleanup_job_ids) >= args.max_precompute_superbatches:
@@ -95,7 +99,7 @@ def main():
                 "sbatch",
                 f"--job-name=Extracting gradients for {train_dataset_split} (checkpoint {i})",
                 dependency,
-                "./slurm_extract_gradients.sh",
+                "./slurm_extract_gradients_olmo.sh" if "OLMo" in args.model else "./slurm_extract_gradients_babylm.sh",
                 args.model,
                 args.dataset_train,
                 str(i),
@@ -121,7 +125,7 @@ def main():
             import shutil
 
             job_ids_test_set_influence = []
-
+            
             if args.single_influence_job:
                 # create one influence estimation job so that subsequent test sets re-use gradients cached on /tmp
                 
@@ -156,7 +160,7 @@ def main():
                 job_ids_test_set_influence.append(job_id_influence)
             else:
                     # create multiple influence estimation jobs, each one will load gradients independently from network share
-
+   
                     for test_dataset_name, test_dataset_split in test_datasets:
                         dependency = f"--dependency=afterok:{job_id_gradients_train}:{':'.join(job_ids_test_sets)}"
                         influence_command = [
@@ -164,7 +168,7 @@ def main():
                             "--nice=10",
                             f"--job-name=Calculation of training data influence between {train_dataset_split} and {test_dataset_name} (checkpoint {i})",
                             dependency,
-                            "./slurm_process_gradients.sh",
+                            "./slurm_process_gradients.sh" if "OLMo" in args.model else "./slurm_process_gradients_babylm.sh",
                             args.model,
                             args.dataset_train,
                             train_dataset_split,

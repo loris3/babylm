@@ -43,7 +43,7 @@ parser.add_argument("--gradients_output_path", help="The path where to store gra
 parser.add_argument("--mode", help="Eiter 'store', or 'store_mean'", default="store")
 parser.add_argument("--skip_if_gradient_folder_exists", default=False, action='store_true')
 args = parser.parse_args()
-
+print("args", args, flush=True)
 
 model_name = args.model.split("/")[-1]
 dataset_name = args.dataset.split("/")[-1]
@@ -52,7 +52,7 @@ dataset_split_name = args.dataset_split
 # create output dirs
 gradient_output_dir = os.path.join(args.gradients_output_path, model_name, dataset_name, dataset_split_name)
 if not os.path.exists(gradient_output_dir):
-    os.makedirs(gradient_output_dir)
+    os.makedirs(gradient_output_dir, exist_ok=True)
 # influence_output_dir = os.path.join("./influence", model_name, dataset_name, dataset_split_name) # this script skips computing existing results
 # if not os.path.exists(influence_output_dir):
 #     os.makedirs(influence_output_dir)
@@ -92,6 +92,7 @@ def get_loss_gradient(model, example,device):
         )
     loss = outputs.loss
     loss.retain_grad()
+    
     return torch.autograd.grad(loss, inputs_embeds, retain_graph=False)[0].squeeze()
     
 
@@ -124,21 +125,22 @@ def get_for_checkpoint(checkpoint_path, i_start, i_end, completion_times_gradien
     device = "cuda:" + str(gpu_id)
     
     model = None
+    print("loading model", flush=True)
     if "llama" in args.model:
         model_config = AutoConfig.from_pretrained(checkpoint_path)
         model = LlamaForCausalLM(config=model_config).to(device)
     elif "OLMo" in args.model:
-        print("loading model", flush=True)
+ 
         model = AutoModelForCausalLM.from_pretrained(args.model, revision=checkpoint_path, torch_dtype=torch.float16).to(device)
-        print("loaded model", flush=True)
+       
     else:
         model_config = AutoConfig.from_pretrained(checkpoint_path)
         model = RobertaForMaskedLM(config=model_config).to(device)
     model.train()
-
+    print("loaded model", flush=True)
     start_time = time.time()
-    print("i_start:i_end",i_start, i_end)
-    print("len(i_start, i_end)", len(dataset[i_start:i_end]))
+    print("i_start:i_end",i_start, i_end, flush=True)
+    print("len(i_start, i_end)", len(dataset[i_start:i_end]),flush=True)
     gradients = torch.stack([get_loss_gradient(model, example,device).detach().cpu().to(torch.bfloat16) for example in dataset[i_start:i_end]["input_ids"]])#.cpu()
     print(f"Time to get gradients: {time.time() - start_time:.4f} s/chunk", flush=True)
     print("len(gradients)", gradients.shape)
@@ -183,6 +185,7 @@ dataset = None
 paradigm = args.paradigm
 
 if "alpaca" in args.dataset:
+    print("alpaca format", flush=True)
     # https://wandb.ai/capecape/alpaca_ft/reports/How-to-Fine-tune-an-LLM-Part-3-The-HuggingFace-Trainer--Vmlldzo1OTEyNjMy#sampling-from-the-model-during-training
     def prompt_no_input(output,_,instruction):
         return ("Below is an instruction that describes a task. "
@@ -206,7 +209,7 @@ if "alpaca" in args.dataset:
     paradigm = "pre"
 
 elif ("errors" in args.dataset) or ("olmes" in args.dataset):
-
+    print("tulu format", flush=True)
     def preprocess_tulu_errors_batched(data_samples):
         prompts = data_samples["prompt"]
         completions = data_samples["completion"]
@@ -226,12 +229,16 @@ elif ("errors" in args.dataset) or ("olmes" in args.dataset):
 
 elif paradigm in ["pre", "mlm"]:
     dataset = load_dataset(args.dataset, split=args.dataset_split)
-    if "text" not in dataset:
+
+    if "text" not in dataset.column_names:
+        print("chat format", flush=True)
         dataset.set_transform(lambda x : tokenizer(apply_chat_template(x, tokenizer=tokenizer)["text"], return_special_tokens_mask=True, truncation=True, padding="max_length", max_length=4096 if "OLMo" in args.model else 512))
 
     else:   
+        print("pretraining format", flush=True)
         dataset.set_transform(lambda x : tokenizer(x["text"], return_special_tokens_mask=True, truncation=True, padding="max_length", max_length=4096 if "OLMo" in args.model else 512))
-
+else:
+    raise NotImplementedError
 
 def get_data_collator(paradigm):
     if paradigm == "mlm":

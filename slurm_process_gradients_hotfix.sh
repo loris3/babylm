@@ -28,3 +28,5 @@ module load miniforge
 # Run your python script
 
 
+
+python process_gradients.py allenai/OLMo-2-1124-7B-SFT allenai/tulu-3-sft-olmo-2-mixture 0 --dataset_train_split=train[34%:35%] --dataset_test=anasedova/tulu_3_no_errors --dataset_test_split=train[0%:100%] --mode=mean --batch_size=10

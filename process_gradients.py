@@ -32,7 +32,7 @@ parser.add_argument("--delete_train_on_success", default=False, action='store_tr
 parser.add_argument("--test", help="The split to access", default=False)
 parser.add_argument("--test_dataset_size", help="The split to access", default=0, type=int)
 args = parser.parse_args()
-
+print("args", args, flush=True)
 import json
 
 from datasets import load_dataset

@@ -84,11 +84,10 @@ def main():
         assert 100 % args.superbatches == 0
         for train_dataset_split in [args.dataset_train_split + f"[{i}%:{i + 100 // args.superbatches}%]" for i in range(0, 100, 100 // args.superbatches)]:
 
-            # if train_dataset_split not in ["train[19%:20%]", "train[20%:21%]", "train[21%:22%]", "train[34%:35%]","train[35%:36%]", "train[36%:37%]", "train[37%:38%]"]:
-            #     print("skipping", train_dataset_split)
-            #     continue
-            # if train_dataset_split == "train[64%:65%]":
-            #     break
+            if train_dataset_split not in ["train[17%:18%]","train[18%:19%]"]:
+                print("skipping", train_dataset_split)
+                continue
+     
             # gradient extraction for superbatch
             dependency = f"--dependency=afterok:{test_gradients_job_id}"  # at most max_precompute_superbatches gradient extraction jobs
             # if len(cleanup_job_ids) >= args.max_precompute_superbatches:

@@ -44,3 +44,5 @@ slurm_process_gradients_combined.sh
 start_jupyterlab.sbatch
 mean_influence_divided_by_len_test/*
 verb_confidence_exp_t/
+noise/*
+results_noise

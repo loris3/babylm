@@ -95,7 +95,35 @@ def get_loss_gradient(model, example,device):
     
     return torch.autograd.grad(loss, inputs_embeds, retain_graph=False)[0].squeeze()
     
+def get_loss_gradient_sft(model, example, labels, device):
+    """Computes gradient of the loss function irt to the input embeddings for MLM.
 
+    Args:
+        model: A model with a `forward` method wich returns `loss`
+        example: An instance from the training data
+        device: What GPU to use (e.g., cuda:0)
+
+    Returns:
+        A 1D tensor: gradient of the loss function irt to the input embeddings
+    """
+    
+    model.zero_grad()
+    
+
+    input_ids, _ = data_collator((torch.tensor(example),)).values() # the data_collator used here applies the exact same mask used in the respective epoch
+
+
+    inputs_embeds=model.get_input_embeddings().weight[input_ids].to(device)
+    inputs_embeds.retain_grad()
+
+    outputs = model.forward(
+            inputs_embeds=inputs_embeds,
+            labels=labels.to(device)
+        )
+    loss = outputs.loss
+    loss.retain_grad()
+    
+    return torch.autograd.grad(loss, inputs_embeds, retain_graph=False)[0].squeeze()
 
 def get_for_checkpoint(checkpoint_path, i_start, i_end, completion_times_gradients):
     """Calculates gradients at a given checkpoint for a given subset and stores it to disk
@@ -140,8 +168,16 @@ def get_for_checkpoint(checkpoint_path, i_start, i_end, completion_times_gradien
     print("loaded model", flush=True)
     start_time = time.time()
     print("i_start:i_end",i_start, i_end, flush=True)
-    print("len(i_start, i_end)", len(dataset[i_start:i_end]),flush=True)
-    gradients = torch.stack([get_loss_gradient(model, example,device).detach().cpu().to(torch.bfloat16) for example in dataset[i_start:i_end]["input_ids"]])#.cpu()
+   # print("len(i_start, i_end)", len(dataset[i_start:i_end]),args.paradigm, flush=True)
+
+    gradients = None
+
+    if args.paradigm == "sft":
+        gradients = torch.stack([get_loss_gradient_sft(model, example["input_ids"], example["labels"],device).detach().cpu().to(torch.bfloat16) for example in dataset[i_start:i_end]])#.cpu()
+    else:
+        gradients = torch.stack([get_loss_gradient(model, example,device).detach().cpu().to(torch.bfloat16) for example in dataset[i_start:i_end]["input_ids"]])#.cpu()
+    
+    
     print(f"Time to get gradients: {time.time() - start_time:.4f} s/chunk", flush=True)
     print("len(gradients)", gradients.shape)
     del model
@@ -174,7 +210,7 @@ else: # RoBERTa
 
 from transformers import DataCollatorForSeq2Seq
 from trl import apply_chat_template, is_conversational
-
+from olmo_training_utils import sft_tulu_tokenize_and_truncate_v1
 
 
 
@@ -237,6 +273,13 @@ elif paradigm in ["pre", "mlm"]:
     else:   
         print("pretraining format", flush=True)
         dataset.set_transform(lambda x : tokenizer(x["text"], return_special_tokens_mask=True, truncation=True, padding="max_length", max_length=4096 if "OLMo" in args.model else 512))
+elif paradigm == "sft":
+    print("sft format olmo custom")
+    dataset = load_dataset(args.dataset, split=args.dataset_split)
+    dataset.set_transform(lambda x : sft_tulu_tokenize_and_truncate_v1(x, tokenizer=tokenizer))
+    # print("dataset[0:1]",dataset[0:1],flush=True)
+    # print(dataset[0:1]["input_ids"])
+    # print(dataset[0:1]["labels"])
 else:
     raise NotImplementedError
 
@@ -245,11 +288,14 @@ def get_data_collator(paradigm):
         return DeterministicDataCollatorForLanguageModeling(
             tokenizer=tokenizer, mlm=True, mlm_probability=0.15
         ) 
-    if paradigm == "pre":
+    if paradigm in ["pre", ]:
         return DataCollatorForLanguageModeling(
             tokenizer=tokenizer, mlm=False
         )
-   
+    if paradigm in ["sft"]:
+            return DataCollatorForSeq2Seq(
+                tokenizer=tokenizer
+            )
 
 data_collator = get_data_collator(args.paradigm)
 

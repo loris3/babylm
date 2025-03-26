@@ -1,33 +1,44 @@
+import torch
+
+
 import argparse
 import os
 
 
 from dotenv import load_dotenv
 load_dotenv()
-
+from tqdm import tqdm
 import wandb
 from transformers import RobertaConfig,AutoConfig
 from transformers import RobertaForMaskedLM
 import torch
 import traceback
 import logging
-
+import os
 from datasets import load_dataset
 import util
 import time
 import util
 import torch 
-
+import traceback   
 from util import get_checkpoints_hub
 from util import DeterministicDataCollatorForLanguageModeling
 
 from multiprocessing import Pool, Queue, Manager
-
+import sys
+import logging
 import math
 
 from transformers import RobertaTokenizerFast,GPT2TokenizerFast, DataCollatorForLanguageModeling,LlamaForCausalLM
 from transformers import AutoModelForCausalLM, AutoTokenizer
  
+from trak.projectors import CudaProjector, NoOpProjector
+from trak.projectors import ProjectionType
+
+
+from transformers import DataCollatorForSeq2Seq
+from trl import apply_chat_template, is_conversational
+from olmo_training_utils import sft_tulu_tokenize_and_truncate_v1
 
 os.environ["TOKENIZERS_PARALLELISM"] = "True"
 
@@ -36,26 +47,27 @@ parser.add_argument("model", help="A model on the hf hub. Format: username/name_
 parser.add_argument("dataset", help="A dataset on the hf hub. Format: username/name")
 parser.add_argument("--dataset_split", help="The split to access", default="train")
 parser.add_argument("checkpoint_nr", help="Id of the checkpoint to extract gradients for (starting at 0)",type=int)
-parser.add_argument("--num_processes_gradients", help="Number of processes to use when obtaining gradients (one model per process)", type=int, nargs="?", const=1, default=2) # Bert: 12 w 4 gpus -> 3 models per gpu
 parser.add_argument("--gradients_per_file", help="Number of gradients per output file", type=int, nargs="?", const=1, default=1000) # 10000 = ~7.4 GB per file for BERT
 parser.add_argument("--paradigm", help="Eiter 'pre', 'mlm', or 'sft'", default="mlm")
 parser.add_argument("--gradients_output_path", help="The path where to store gradients at", default="./gradients")
-parser.add_argument("--mode", help="Eiter 'store', or 'store_mean'", default="store")
+parser.add_argument("--mode", help="Eiter 'store', 'mean', or 'mean_normalized'", default="store")
 parser.add_argument("--skip_if_gradient_folder_exists", default=False, action='store_true')
+parser.add_argument("--random_projection", default=False, action='store_true')
+parser.add_argument("--proj_dim", type=int, nargs="?", const=1, default=2**14)
 args = parser.parse_args()
-print("args", args, flush=True)
+
+print("Args", args, flush=True)
+print("Cuda version:", torch.version.cuda)
+
 
 model_name = args.model.split("/")[-1]
 dataset_name = args.dataset.split("/")[-1]
 dataset_split_name = args.dataset_split
 
 # create output dirs
-gradient_output_dir = os.path.join(args.gradients_output_path, model_name, dataset_name, dataset_split_name)
+gradient_output_dir = os.path.join(args.gradients_output_path, str(args.proj_dim) if args.random_projection else "full",model_name, dataset_name, dataset_split_name)
 if not os.path.exists(gradient_output_dir):
     os.makedirs(gradient_output_dir, exist_ok=True)
-# influence_output_dir = os.path.join("./influence", model_name, dataset_name, dataset_split_name) # this script skips computing existing results
-# if not os.path.exists(influence_output_dir):
-#     os.makedirs(influence_output_dir)
 
 
 
@@ -65,9 +77,11 @@ logging.basicConfig(
 
 
 
+device = "cuda:0"
+
 
 def get_loss_gradient(model, example,device):
-    """Computes gradient of the loss function irt to the input embeddings for MLM.
+    """Computes gradient of the loss function irt to the input embeddings.
 
     Args:
         model: A model with a `forward` method wich returns `loss`
@@ -77,55 +91,43 @@ def get_loss_gradient(model, example,device):
     Returns:
         A 1D tensor: gradient of the loss function irt to the input embeddings
     """
-    
+    # uncomment this to debug out of memory errors:
+
+    # free_mem, total_mem = torch.cuda.mem_get_info(device=device)
+    # print(f"Free memory {device}:  {(free_mem/total_mem)} {free_mem / (1024 ** 2):.2f}/{total_mem / (1024 ** 2):.2f}",flush=True)
+
+
     model.zero_grad()
+
+    # we process one example at a time 
+    example = data_collator(
+        [ # <- but the dataloader expects a batch
+            {
+            key: value  
+            for key, value in example.items() if key in ["input_ids", "attention_mask", "labels"] # only keep relevant cols
+            }
+        ]) 
     
+    # n.b.: according to the documentaiton: "Shifting the inputs and labels to align them happens inside the model, so the data collator just copies the inputs to create the labels." https://huggingface.co/learn/nlp-course/chapter7/6#initializing-a-new-model
 
-    input_ids, labels = data_collator((torch.tensor(example),)).values() # the data_collator used here applies the exact same mask used in the respective epoch
 
-    inputs_embeds=model.get_input_embeddings().weight[input_ids].to(device)
+    # obtain input embeddings
+    inputs_embeds=model.get_input_embeddings().weight[example["input_ids"]].to(device)
     inputs_embeds.retain_grad()
+
 
     outputs = model.forward(
             inputs_embeds=inputs_embeds,
-            labels=labels.to(device)
+            labels=example["labels"].to(device)
         )
-    loss = outputs.loss
+
+
+    loss = outputs.loss 
     loss.retain_grad()
-    
     return torch.autograd.grad(loss, inputs_embeds, retain_graph=False)[0].squeeze()
     
-def get_loss_gradient_sft(model, example, labels, device):
-    """Computes gradient of the loss function irt to the input embeddings for MLM.
 
-    Args:
-        model: A model with a `forward` method wich returns `loss`
-        example: An instance from the training data
-        device: What GPU to use (e.g., cuda:0)
-
-    Returns:
-        A 1D tensor: gradient of the loss function irt to the input embeddings
-    """
-    
-    model.zero_grad()
-    
-
-    input_ids, _ = data_collator((torch.tensor(example),)).values() # the data_collator used here applies the exact same mask used in the respective epoch
-
-
-    inputs_embeds=model.get_input_embeddings().weight[input_ids].to(device)
-    inputs_embeds.retain_grad()
-
-    outputs = model.forward(
-            inputs_embeds=inputs_embeds,
-            labels=labels.to(device)
-        )
-    loss = outputs.loss
-    loss.retain_grad()
-    
-    return torch.autograd.grad(loss, inputs_embeds, retain_graph=False)[0].squeeze()
-
-def get_for_checkpoint(checkpoint_path, i_start, i_end, completion_times_gradients):
+def get_for_checkpoint(model, projector, checkpoint_path, i_start, i_end):
     """Calculates gradients at a given checkpoint for a given subset and stores it to disk
 
     Args:
@@ -135,65 +137,60 @@ def get_for_checkpoint(checkpoint_path, i_start, i_end, completion_times_gradien
 
     Raises:
         e: Any error but most likely OOM
-    """                         
-    print("checkpoint_path",checkpoint_path, i_start, i_end)
-    if not any([a in args.model for a in ["llama", "OLMo"]]):
-        data_collator.set_epoch(util.get_epoch(checkpoint_path)) # to ensure the same masking as during training
-
-    gpu_id = gpu_queue.get()
-    out_dir = os.path.join(gradient_output_dir, os.path.basename(checkpoint_path))
-    out_path = os.path.join(gradient_output_dir, os.path.basename(checkpoint_path), "mean") if args.mode == "store_mean" else os.path.join(gradient_output_dir, os.path.basename(checkpoint_path),str(i_start) + "_" + str(i_end))
-    os.makedirs(out_dir,exist_ok=True)
-    if os.path.isfile(out_path):
-        gpu_queue.put(gpu_id)
-        logging.info("Skipping {}, already generated".format(out_path) )
-        return 
+    """                
+    log_prefix = f"[batch {checkpoint_path}_{i_start}_{i_end}]"
+    try:      
+        logging.debug(f"{log_prefix} is starting...")
+        if not any([a in args.model for a in ["llama", "OLMo"]]):
+            data_collator.set_epoch(util.get_epoch(checkpoint_path)) # to ensure the same masking as during training
 
 
-    device = "cuda:" + str(gpu_id)
+        out_dir = os.path.join(gradient_output_dir, os.path.basename(checkpoint_path))
+        out_path = os.path.join(gradient_output_dir, os.path.basename(checkpoint_path), args.mode) if "mean" in args.mode else os.path.join(gradient_output_dir, os.path.basename(checkpoint_path),str(i_start) + "_" + str(i_end))
+        os.makedirs(out_dir,exist_ok=True)
+        if os.path.isfile(out_path):
+            logging.info(f"{log_prefix} skipping {out_path}, already stored")
+            return 
+      
+        
     
-    model = None
-    print("loading model", flush=True)
-    if "llama" in args.model:
-        model_config = AutoConfig.from_pretrained(checkpoint_path)
-        model = LlamaForCausalLM(config=model_config).to(device)
-    elif "OLMo" in args.model:
- 
-        model = AutoModelForCausalLM.from_pretrained(args.model, revision=checkpoint_path, torch_dtype=torch.float16).to(device)
-       
-    else:
-        model_config = AutoConfig.from_pretrained(checkpoint_path)
-        model = RobertaForMaskedLM(config=model_config).to(device)
-    model.train()
-    print("loaded model", flush=True)
-    start_time = time.time()
-    print("i_start:i_end",i_start, i_end, flush=True)
-   # print("len(i_start, i_end)", len(dataset[i_start:i_end]),args.paradigm, flush=True)
+        gradients = None
+        
+        logging.debug(f"{log_prefix} is getting gradients...")
 
-    gradients = None
 
-    if args.paradigm == "sft":
-        gradients = torch.stack([get_loss_gradient_sft(model, example["input_ids"], example["labels"],device).detach().cpu().to(torch.bfloat16) for example in dataset[i_start:i_end]])#.cpu()
-    else:
-        gradients = torch.stack([get_loss_gradient(model, example,device).detach().cpu().to(torch.bfloat16) for example in dataset[i_start:i_end]["input_ids"]])#.cpu()
-    
-    
-    print(f"Time to get gradients: {time.time() - start_time:.4f} s/chunk", flush=True)
-    print("len(gradients)", gradients.shape)
-    del model
-    torch.cuda.empty_cache()
-    gpu_queue.put(gpu_id)
-            
-    if args.mode == "store":
-        print("store", out_path, flush=True)
-        torch.save( gradients, out_path)
-    else:
-        return torch.sum(gradients, axis=0)
-    del gradients
-    
-    
-    completion_times_gradients.append(time.time() - start_time)
-    return
+        def project(x):
+            p = projector.project(x, model_id=0)
+            return p
+
+              
+        gradients = torch.stack([ 
+                                    project(
+                                        get_loss_gradient(
+                                            model, 
+                                            dataset[i],
+                                            device
+                                        ).detach().flatten().unsqueeze(0).half()
+                                    ).cpu() 
+                                    for i in tqdm(range(i_start, min(i_end, len(dataset)-1)), desc=f"{log_prefix} is getting gradients...")
+                                ])
+        logging.debug(f"{log_prefix} ... got gradients")
+        if args.mode == "store":
+            torch.save( gradients, out_path)
+            logging.info(f"{log_prefix} stored gradients to {out_path}")
+        elif args.mode == "mean":
+            logging.info(f"{log_prefix} partial sum")
+            return torch.sum(gradients, axis=0)
+        elif args.mode == "mean_normalized":
+            logging.info(f"{log_prefix} partial sum normalized")
+            return torch.nn.functional.normalize(gradients, dim=1).sum(axis=0) # vanja: normalize before aggregating for cosine similarity
+           
+        else:
+            raise NotImplementedError
+        del gradients
+        return
+    except:
+        print(f"Exception during {checkpoint_path}_{i_start}_{i_end}", traceback.format_exc(),flush=True)
 
 
 
@@ -208,20 +205,12 @@ else: # RoBERTa
     tokenizer = RobertaTokenizerFast.from_pretrained(args.model, max_len=512)
    
 
-from transformers import DataCollatorForSeq2Seq
-from trl import apply_chat_template, is_conversational
-from olmo_training_utils import sft_tulu_tokenize_and_truncate_v1
-
-
-
-
 
 dataset = None
 
 paradigm = args.paradigm
 
 if "alpaca" in args.dataset:
-    print("alpaca format", flush=True)
     # https://wandb.ai/capecape/alpaca_ft/reports/How-to-Fine-tune-an-LLM-Part-3-The-HuggingFace-Trainer--Vmlldzo1OTEyNjMy#sampling-from-the-model-during-training
     def prompt_no_input(output,_,instruction):
         return ("Below is an instruction that describes a task. "
@@ -241,54 +230,36 @@ if "alpaca" in args.dataset:
     
     dataset = load_dataset(args.dataset, split=args.dataset_split) 
     dataset.set_transform(lambda x : tokenizer(create_alpaca_prompt(x), return_special_tokens_mask=True, truncation=True, padding="max_length", max_length=4096))
-
+    
     paradigm = "pre"
-
-elif ("errors" in args.dataset) or ("olmes" in args.dataset):
-    print("tulu format", flush=True)
-    def preprocess_tulu_errors_batched(data_samples):
-        prompts = data_samples["prompt"]
-        completions = data_samples["completion"]
-        batched_messages = [
-            [
-                {"role": "user", "content": prompt if prompt is not None else ""},
-                {"role": "assistant", "content": completion if completion is not None else ""}
-            ]
-            for prompt, completion in zip(prompts, completions) 
-        ]
-        
-        return [tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True) for messages in batched_messages]
-    dataset = load_dataset(args.dataset, split=args.dataset_split) 
-    dataset.set_transform(lambda x : tokenizer(preprocess_tulu_errors_batched(x),return_special_tokens_mask=False, truncation=True, padding="max_length", max_length=4096,return_tensors="pt"))
-    paradigm = "pre"
-
+    logging.info(f"dataset format: alpaca (pre)")
 
 elif paradigm in ["pre", "mlm"]:
     dataset = load_dataset(args.dataset, split=args.dataset_split)
 
     if "text" not in dataset.column_names:
-        print("chat format", flush=True)
         dataset.set_transform(lambda x : tokenizer(apply_chat_template(x, tokenizer=tokenizer)["text"], return_special_tokens_mask=True, truncation=True, padding="max_length", max_length=4096 if "OLMo" in args.model else 512))
 
+        logging.info(f"dataset format: chat format (pre)")
     else:   
-        print("pretraining format", flush=True)
         dataset.set_transform(lambda x : tokenizer(x["text"], return_special_tokens_mask=True, truncation=True, padding="max_length", max_length=4096 if "OLMo" in args.model else 512))
+
+        logging.info(f"dataset format: pre")
+  
 elif paradigm == "sft":
-    print("sft format olmo custom")
     dataset = load_dataset(args.dataset, split=args.dataset_split)
     dataset.set_transform(lambda x : sft_tulu_tokenize_and_truncate_v1(x, tokenizer=tokenizer))
-    # print("dataset[0:1]",dataset[0:1],flush=True)
-    # print(dataset[0:1]["input_ids"])
-    # print(dataset[0:1]["labels"])
+    logging.info(f"dataset format: tulu (sft)")
+
 else:
     raise NotImplementedError
 
 def get_data_collator(paradigm):
-    if paradigm == "mlm":
+    if paradigm in ["mlm"]:
         return DeterministicDataCollatorForLanguageModeling(
             tokenizer=tokenizer, mlm=True, mlm_probability=0.15
         ) 
-    if paradigm in ["pre", ]:
+    if paradigm in ["pre"]:
         return DataCollatorForLanguageModeling(
             tokenizer=tokenizer, mlm=False
         )
@@ -297,66 +268,81 @@ def get_data_collator(paradigm):
                 tokenizer=tokenizer
             )
 
-data_collator = get_data_collator(args.paradigm)
+data_collator = get_data_collator(paradigm)
 
 
 checkpoints =  get_checkpoints_hub(args.model)
 
 
 
-gpu_queue = Queue()
 
 
 
 if __name__ == '__main__':
     
-    assert args.num_processes_gradients// (max(1, torch.cuda.device_count())) > 0, "Need to assign at least as many processes as GPUs (change num_processes_gradients!)"
-    print("torch.cuda.device_count()",torch.cuda.device_count())
-    # set up gpu queue to allocate gpus evenly between processes
-    for _ in range(args.num_processes_gradients//max(1,torch.cuda.device_count())):
-
-        for i in range(0,max(1,torch.cuda.device_count())):
-            gpu_queue.put(i)
-            print(i, flush=True)
-       
-
-    manager = Manager()
-    completion_times_gradients = manager.list() # the processes report back to the main process wich handles web logging
-
-    pool_gradients = Pool(args.num_processes_gradients)
-    
     checkpoint = checkpoints[args.checkpoint_nr]
     
     out_path = os.path.join(gradient_output_dir, os.path.basename(checkpoint))
-    print("out_path",out_path, flush=True)
-    if args.mode == "store_mean" and os.path.isfile(os.path.join(out_path,"mean")):
+    
+    if "mean" in args.mode and os.path.isfile(os.path.join(out_path,args.mode)):
         logging.info("Skipping {}, already calculated".format(out_path) )
     elif args.mode == "store" and os.path.isdir(out_path) and len(os.listdir(out_path)) == 0 and args.skip_if_gradient_folder_exists:
         logging.info("Skipping {}, because folder exists (--skip_if_gradient_folder_exists) and is empty".format(out_path) )
     else:
-      
-        run = wandb.init(project="babylm_gradient_extraction")
-        run.name = os.path.join(args.model, os.getenv("SLURM_JOB_NAME", "?"))
-        logging.info("Getting gradients for checkpoint-{}".format(checkpoint))
-
-        # create tasks for subprocesses
-        tasks_gradients = [(checkpoint,i, i + args.gradients_per_file, completion_times_gradients) for i in range(0, len(dataset), args.gradients_per_file)]
-        r = pool_gradients.starmap_async(get_for_checkpoint, tasks_gradients)   
-
-        # web logging
-        while not r.ready(): # loop to not block the main process
-            while len(completion_times_gradients) > 0:
-                run.log({"gradients/time_per_chunk": completion_times_gradients.pop()},commit=True)
-            run.log({"gradients/pool_ram_usage":util.get_pool_memory_usage(pool_gradients)}, commit=True)
-            time.sleep(10)  
         
-        logging.info("Got gradients for checkpoint-{}".format(checkpoint))
+        logging.info(f"writing results to {out_path}")
 
-        if args.mode == "store_mean":
-            print("store mean", flush=True)
-            results = r.get()
+        run = wandb.init(project="gradient_extraction")
+        run.name = os.path.join(args.model, os.getenv("SLURM_JOB_NAME", "?"))
+
+      
+        model = None
+ 
+        logging.info(f"loading model {args.model}...")
+
+        if "llama" in args.model:
+            model_config = AutoConfig.from_pretrained(checkpoint)
+            model = LlamaForCausalLM(config=model_config).to(device)
+        elif "OLMo" in args.model:
+            model = AutoModelForCausalLM.from_pretrained(args.model, revision=checkpoint, torch_dtype=torch.float16).to(device)
+        else:
+            model_config = AutoConfig.from_pretrained(checkpoint)
+            model = RobertaForMaskedLM(config=model_config).to(device)
+        model.train()
+        logging.info(f"... loading done")
+
+        
+    
+        
+        
+        projector = None
+        if args.random_projection:
+            grad_dim = None
+            logging.debug(f"inferring projection parameters ...")
+            grad_dim = get_loss_gradient(model, dataset[0], device).detach().flatten().unsqueeze(0).shape[-1]
+            logging.debug(f"... using grad_dim={grad_dim} proj_dim={args.proj_dim} ...")
+            projector = CudaProjector(grad_dim=grad_dim, proj_dim=args.proj_dim,seed=42, proj_type=ProjectionType.rademacher,device=device, max_batch_size=8)
+            logging.info(f"... set up projector done")
+        else:
+            logging.info(f"storing full gradients")
+            projector = NoOpProjector()
+       
+        
+        results = []
+        for i in range(0, len(dataset), args.gradients_per_file): 
+            start_time = time.time()
+
+            results.append(get_for_checkpoint(model, projector, checkpoint,i, i + args.gradients_per_file))   
+
+            run.log({"gradients/time_per_chunk": time.time()-start_time},commit=False)
+            run.log({"gradients/time_per_example": (time.time()-start_time)/args.gradients_per_file},commit=True)
+          
+        
+        if "mean" in args.mode:
+            logging.info("aggregating mean gradients")
             t = torch.stack(results).sum(axis=0) / len(dataset)
             torch.save(t, os.path.join(out_path, "mean"))
+            logging.info(f"stored mean gradients")
 
-    pool_gradients.close()
-    pool_gradients.join()
+        logging.info(f"task complete!")
+        run.finish()

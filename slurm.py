@@ -1,22 +1,50 @@
 import argparse
 import subprocess
 import os
+import shutil
+
+
+CONTAINER_IMAGE = "loris3/cuda:latest"
+NODELIST_EXTRACT = "dgx-h100-em2"
+NODELIST_PROCESS = "dgx-h100-em2"
+
+
+MEM_EXTRACT = "124G"
+MEM_PROCESS = "355GB"
+TIME_EXTRACT_TEST ="0-12:00:00"
+
+TIME_EXTRACT_TRAIN_PER_SUPERCHUNK ="0-12:00:00"
+TIME_PROCESS ="0-12:00:00"
+
+def submit_script(script, args, debug_id=None):
+    if args.debug:
+        print(f"[DEBUG] {script}")
+        return debug_id
+    else:
+        with open("s.sh", "w") as script_file:
+            script_file.write(script.lstrip("\n"))
+        submit_command = ["sbatch", "s.sh"]
+        
+        extract_process = subprocess.run(submit_command, stdout=subprocess.PIPE, text=True, check=True)
+        return extract_process.stdout.strip().split()[-1] # get SLURM job ID 
+
 def main():
     print(os.getcwd())
     parser = argparse.ArgumentParser(description="Submit SLURM jobs for gradient extraction and influence computation.")
     parser.add_argument("model", type=str, help="model name.")
     parser.add_argument("dataset_train", type=str, help="train dataset name.")
     parser.add_argument("dataset_train_split", type=str, help="train split name")
+    parser.add_argument("--proj_dim", type=int, nargs="?", const=1, default=2**14)
 
     parser.add_argument("--test_datasets", type=str, nargs="+", help="List of dataset_name split_name pairs.")
+        
+    parser.add_argument("--stop_after_first", action="store_true", help="Only run for first superbatch")
 
-
-
-    parser.add_argument("--max_precompute_superbatches",help="Maximum number of gradient extraction tasks to run before processing. Adds SLURM dependencies", type=int, default=2)
     parser.add_argument("--debug", action="store_true", help="Log commands instead of executing them.")
-    parser.add_argument("--single_influence_job", action="store_true", help="Uses one job for all test sets: enables caching of gradients to the node's /tmp partition. If omitted, one job per test set is created") 
     parser.add_argument("--superbatches",help="Times the training dataset should be split", type=int, default=1)
-    parser.add_argument("--paradigm",help="One of 'mlm', 'pre", default="pre")
+    parser.add_argument("--paradigm", help="One of 'mlm', 'pre' or 'sft'", default="pre")
+    parser.add_argument("--mode", help="One of 'single', 'mean', 'mean_normalized'.If 'mean', mean influence of individual train on all examples in test; if 'single' 1 train -> 1 test", default="single")
+    parser.add_argument("--random_projection", default=False, action='store_true')
 
     class SplitArgs(argparse.Action):
         def __call__(self, parser, namespace, values, option_string=None):
@@ -46,34 +74,43 @@ def main():
     else:
         checkpoint_ids = list(range(args.n_checkpoints)) if args.checkpoints is None else args.checkpoints
 
-    for i in checkpoint_ids:
-
+    for checkpoint_id in checkpoint_ids:
         job_ids_test_sets = []
-        # first, extract gradients for test datasets (used troughout all superbatches)
+        # first, extract gradients for test datasets (re-used troughout all superbatches)
         
         for test_dataset_name, test_dataset_split in test_datasets:
-            dependency = ""
-            extract_command = [
-                "sbatch",
-                f"--job-name=Extracting gradients for {test_dataset_name} {test_dataset_split} (checkpoint {i})",
-                dependency,
-                "./slurm_extract_gradients_olmo.sh" if "OLMo" in args.model else "./slurm_extract_gradients_babylm.sh",
-                args.model,
-                test_dataset_name,
-                str(i),
-                test_dataset_split,
-                args.paradigm,
-                "store_mean"
-            ]
+          
+         
+            extract_script_test = \
+f"""
+#!/bin/bash
+#SBATCH --job-name="[IE Experiments] Extracting Gradients {test_dataset_name} {test_dataset_split} (checkpoint {checkpoint_id})"
+#SBATCH --container-image={CONTAINER_IMAGE}
+#SBATCH --container-mount-home 
+#SBATCH --mem={MEM_EXTRACT} 
+#SBATCH --cpus-per-task=24  
+#SBATCH --gres=gpu:1
+#SBATCH --time={TIME_EXTRACT_TEST}
+#SBATCH --container-workdir={os.getcwd()}
+#SBATCH --nodelist={NODELIST_EXTRACT}
 
-            extract_command = [c for c in extract_command if c != ""]
-            if args.debug:
-                extract_command_str = " ".join([c for c in extract_command])
-                print(f"[DEBUG] {extract_command_str}")
-                test_gradients_job_id = f"job_{i}_test_extract"  # Mock job ID in args.debug mode
-            else:
-                extract_process = subprocess.run(extract_command, stdout=subprocess.PIPE, text=True, check=True)
-                test_gradients_job_id = extract_process.stdout.strip().split()[-1] # get SLURM job ID 
+
+python3 --version
+
+python3 extract_gradients.py \
+{args.model} \
+{test_dataset_name} \
+{checkpoint_id} \
+--dataset_split={test_dataset_split} \
+--paradigm={args.paradigm} \
+--mode={args.mode if "mean" in args.mode else "store"} \
+{"--random_projection" if args.random_projection else ""}
+"""
+
+
+            
+          
+            test_gradients_job_id = submit_script(extract_script_test, args, debug_id=f"job_{checkpoint_id}_test_extract")
             job_ids_test_sets.append(test_gradients_job_id)
 
 
@@ -84,138 +121,127 @@ def main():
         assert 100 % args.superbatches == 0
         for train_dataset_split in [args.dataset_train_split + f"[{i}%:{i + 100 // args.superbatches}%]" for i in range(0, 100, 100 // args.superbatches)]:
 
-            if train_dataset_split not in ["train[17%:18%]","train[18%:19%]"]:
-                print("skipping", train_dataset_split)
-                continue
+            # if train_dataset_split not in ["train[17%:18%]","train[18%:19%]"]:
+            #     print("skipping", train_dataset_split)
+            #     continue
      
-            # gradient extraction for superbatch
-            dependency = f"--dependency=afterok:{test_gradients_job_id}"  # at most max_precompute_superbatches gradient extraction jobs
-            # if len(cleanup_job_ids) >= args.max_precompute_superbatches:
-            #     dependency += ":"+cleanup_job_ids[0]
-            #     cleanup_job_ids = cleanup_job_ids[args.max_precompute_superbatches:]
+            extract_script_train = \
+f"""
+#!/bin/bash
+#SBATCH --job-name="[IE Experiments] Extracting Gradients {train_dataset_split} (checkpoint {checkpoint_id})"
+#SBATCH --container-image={CONTAINER_IMAGE}
+#SBATCH --container-mount-home 
+#SBATCH --mem={MEM_EXTRACT} 
+#SBATCH --cpus-per-task=24  
+#SBATCH --gres=gpu:1
+#SBATCH --time={TIME_EXTRACT_TRAIN_PER_SUPERCHUNK}
+#SBATCH --container-workdir={os.getcwd()}
+#SBATCH --nodelist={NODELIST_EXTRACT}
+#SBATCH --dependency=afterok:{":".join([str(i) for i in job_ids_test_sets])}
 
-            extract_command = [
-                "sbatch",
-                f"--job-name=Extracting gradients for {train_dataset_split} (checkpoint {i})",
-                dependency,
-                "./slurm_extract_gradients_olmo.sh" if "OLMo" in args.model else "./slurm_extract_gradients_babylm.sh",
-                args.model,
-                args.dataset_train,
-                str(i),
-                train_dataset_split,
-                args.paradigm,
-                "store",
 
-            ]
-            extract_command = [c for c in extract_command if c != ""]
-            if args.debug:
-                extract_command_str = " ".join([c for c in extract_command])
-                print(f"[DEBUG] {extract_command_str}")
-                job_id_gradients_train = f"job_{i}_{train_dataset_split}_extract"  # Mock job ID in args.debug mode
-            else:
-                extract_process = subprocess.run(extract_command, stdout=subprocess.PIPE, text=True, check=True)
-                job_id_gradients_train = extract_process.stdout.strip().split()[-1] # get SLURM job ID 
+python3 --version
+
+python3 extract_gradients.py \
+{args.model} \
+{args.dataset_train} \
+{checkpoint_id} \
+--dataset_split={train_dataset_split} \
+--paradigm={args.paradigm} \
+--mode=store \
+{"--random_projection" if args.random_projection else ""}
+"""
+
+
+          
+            job_id_gradients_train = submit_script(extract_script_train, args, debug_id=f"job_{checkpoint_id}_{train_dataset_split}_extract")
 
 
             ##############
             # influence computation
             # per test dataset
             # per superbatch
-            import shutil
+            
 
             job_ids_test_set_influence = []
             
-            if args.single_influence_job:
+     
                 # create one influence estimation job so that subsequent test sets re-use gradients cached on /tmp
                 
-                # copy template
-                shutil.copyfile("./slurm_process_gradients_template.sh", "./slurm_process_gradients_combined.sh")
+            process_script = \
+f"""
+#!/bin/bash
+#SBATCH --job-name="[IE Experiments] Processing Gradients {train_dataset_split} (checkpoint {checkpoint_id})"
+#SBATCH --container-image={CONTAINER_IMAGE}
+#SBATCH --container-mount-home 
+#SBATCH --mem={MEM_PROCESS} 
+#SBATCH --cpus-per-task=24  
+#SBATCH --gres=gpu:0
+#SBATCH --time={TIME_PROCESS}
+#SBATCH --container-workdir={os.getcwd()}
+#SBATCH --nodelist={NODELIST_PROCESS}
+#SBATCH --dependency=afterok:{job_id_gradients_train}:{':'.join(job_ids_test_sets)}
 
-                with open("./slurm_process_gradients_combined.sh", 'a') as fd:
-                    # append one python extract_gradients.py call per test set
-                    for test_dataset_name, test_dataset_split in test_datasets:
-                        c = f"python process_gradients.py {args.model} {args.dataset_train} {i} --dataset_train_split={train_dataset_split} --dataset_test={test_dataset_name} --dataset_test_split={test_dataset_split} --mode=mean  --batch_size=10"
-                        fd.write(f'\n{c}')
+python3 --version
+
+"""
 
 
-                dependency = f"--dependency=afterok:{job_id_gradients_train}:{':'.join(job_ids_test_sets)}" # run after gradient scripts for test sets and superbatch are complete
-                influence_command = [
-                    "sbatch",
-                    "--nice=10",
-                    f"--job-name=Calculation of training data influence for {train_dataset_split} (checkpoint {i})",
-                    dependency,
-                    "./slurm_process_gradients_combined.sh",
-                ]
-                influence_command = [c for c in influence_command if c != ""]
-                influence_command_str = " ".join([c for c in influence_command])
-                if args.debug:
-                    
-                    print(f"[DEBUG] {influence_command_str}")
-                    job_id_influence = f"job_{i}_{train_dataset_split}_influence_{test_dataset_name}{test_dataset_split}"  # Mock job ID in args.debug mode
-                else:
-                    influence_process = subprocess.run(influence_command, stdout=subprocess.PIPE, text=True, check=True)
-                    job_id_influence = influence_process.stdout.strip().split()[-1] # get SLURM job ID 
+          
+            # append one python extract_gradients.py call per test set
+            for test_dataset_name, test_dataset_split in test_datasets:
+                c = \
+f"""
+python3 process_gradients.py \
+    {args.model} \
+    {args.dataset_train} \
+    {checkpoint_id} \
+    --dataset_train_split={train_dataset_split} \
+    --dataset_test={test_dataset_name} \
+    --dataset_test_split={test_dataset_split} \
+    --mode={args.mode} \
+    --batch_size=10
+    """
+                process_script += f'\n{c}'
 
-                job_ids_test_set_influence.append(job_id_influence)
-            else:
-                    # create multiple influence estimation jobs, each one will load gradients independently from network share
+
+            job_id_influence = submit_script(process_script, args, debug_id=f"job_{checkpoint_id}_{train_dataset_split}_influence_{test_dataset_name}{test_dataset_split}")
+            job_ids_test_set_influence.append(job_id_influence)
+    
+            if args.stop_after_first:
+                print("[DEBUG] stopping after first superbatch")
+                exit()
+        # cleanup after superbatch
+        cleanup_script = \
+f"""
+#!/bin/bash
+#SBATCH --job-name="Cleanup for {train_dataset_split} (checkpoint {checkpoint_id})"
+#SBATCH --comment="Deletes gradients stored on network share"
+#SBATCH --time=0-00:20:00
+#SBATCH --container-image={CONTAINER_IMAGE}
+#SBATCH --container-mount-home 
+#SBATCH --mem={MEM_PROCESS} 
+#SBATCH --cpus-per-task=24  
+#SBATCH --gres=gpu:0
+#SBATCH --container-workdir={os.getcwd()}
+#SBATCH --nodelist={NODELIST_PROCESS}
+
+#SBATCH --dependency=afterok:{':'.join(job_ids_test_set_influence)}
+
+checkpoint_name=$(python3 get_checkpoint_name.py {args.model} {str(checkpoint_id)})
+
+
+rm -r ./gradients/{args.proj_dim}/{os.path.basename(args.model)}/{os.path.basename(args.dataset_train)}/{train_dataset_split}/$checkpoint_name/*
+
+echo deleted "./gradients/{args.proj_dim}/{os.path.basename(args.model)}/{os.path.basename(args.dataset_train)}/{train_dataset_split}/$checkpoint_name/*"
+
+module purge
+"""
+        cleanup_job_id = submit_script(cleanup_script, args, debug_id= f"job_{checkpoint_id}_{train_dataset_split}_cleanup")
+        cleanup_job_ids.append(cleanup_job_id)
+
+        
    
-                    for test_dataset_name, test_dataset_split in test_datasets:
-                        dependency = f"--dependency=afterok:{job_id_gradients_train}:{':'.join(job_ids_test_sets)}"
-                        influence_command = [
-                            "sbatch",
-                            "--nice=10",
-                            f"--job-name=Calculation of training data influence between {train_dataset_split} and {test_dataset_name} (checkpoint {i})",
-                            dependency,
-                            "./slurm_process_gradients.sh" if "OLMo" in args.model else "./slurm_process_gradients_babylm.sh",
-                            args.model,
-                            args.dataset_train,
-                            train_dataset_split,
-                            test_dataset_name,
-                            test_dataset_split,
-                            str(i)
-                        ]
-                        influence_command = [c for c in influence_command if c != ""]
-                        if args.debug:
-                            influence_command_str = " ".join([c for c in influence_command])
-                            print(f"[DEBUG] {influence_command_str}")
-                            job_id_influence = f"job_{i}_{train_dataset_split}_influence_{test_dataset_name}{test_dataset_split}"  # Mock job ID in args.debug mode
-                        else:
-                            influence_process = subprocess.run(influence_command, stdout=subprocess.PIPE, text=True, check=True)
-                            job_id_influence = influence_process.stdout.strip().split()[-1] # get SLURM job ID 
-
-                    job_ids_test_set_influence.append(job_id_influence)
-
-
-
-
-
-            # cleanup after superbatch
-            dependency = f"--dependency=afterok:{':'.join(job_ids_test_set_influence)}"
-            cleanup_command = [
-                "sbatch",
-                "--nice=10",
-                f"--job-name=Deleting gradients for {train_dataset_split}",
-                dependency,
-                "./slurm_cleanup.sh",
-                args.model,
-                str(i),
-                os.path.basename(args.model),
-                os.path.basename(args.dataset_train),
-                train_dataset_split,
-              
-            ]
-            cleanup_command = [c for c in cleanup_command if c != ""]
-            if args.debug:
-                cleanup_command_str = " ".join([c for c in cleanup_command])
-                print(f"[DEBUG] {cleanup_command_str}")
-                cleanup_job_id = f"job_{i}_{train_dataset_split}_cleanup"  # Mock job ID in args.debug mode
-            else:
-                cleanup_process = subprocess.run(cleanup_command, stdout=subprocess.PIPE, text=True, check=True)
-                cleanup_job_id = cleanup_process.stdout.strip().split()[-1] # get SLURM job ID 
-            cleanup_job_ids.append(cleanup_job_id)
-            
-       
        
 if __name__ == "__main__":
     main()

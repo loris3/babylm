@@ -20,13 +20,7 @@ export ENV_NAME="babylm_venv"
 # Load module miniforge3
 module load miniforge
 
-# df -h $TMPDIR/gradients
-# rm -rf $TMPDIR/gradients
-
-
-# df -h $TMPDIR/gradients
-
-# conda env update --file environment.yml
+conda env update --file environment.yml
 
 # Run your python script
 

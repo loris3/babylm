@@ -42,14 +42,11 @@ from tokenizers.normalizers import NFKC
 parser = argparse.ArgumentParser("pretraining")
 parser.add_argument("dataset", help="A dataset on the hf hub. Format: username/name")
 parser.add_argument("curriculum", help="The curriculum to use. Filename in the dataset repo. Examples: curriculum.pt or random.pt")
-parser.add_argument("--per_device_train_batch_size", help="per_device_train_batch_size", type=int, nargs="?", const=1, default=64) # TODO
-parser.add_argument("--cuda_visible_devices", help="Comma seperated GPU ids to use", nargs="?", const=1, default="0,1")
 parser.add_argument("--model_type", help="One of 'roberta', 'llama'", default="roberta")
 args = parser.parse_args()
 
 
-os.environ["CUDA_VISIBLE_DEVICES"] = args.cuda_visible_devices
-os.environ["WANDB_PROJECT"]="babylm_pretraining"
+os.environ["WANDB_PROJECT"]="pretraining"
 
 datasets = load_dataset(args.dataset)
 
@@ -220,8 +217,7 @@ def compute_metrics(eval_pred, compute_result=True):
         logits = torch.tensor(logits)
     if not torch.is_tensor(labels):
         labels = torch.tensor(labels)
-    # logits = logits.detach().cpu()
-    # labels = labels.detach().cpu()
+   
     predictions = torch.argmax(logits, axis=-1)
     label_mask = torch.where(labels > 0, 1.0, 0.0)
 
@@ -233,8 +229,6 @@ def compute_metrics(eval_pred, compute_result=True):
     if compute_result:
         result = {
             "accuracy": batch_metrics["accuracy"] / batch_metrics["normalizer"],
-            # "mlm_perplexity": math.exp(batch_metrics["mlm_loss"] / batch_metrics["normalizer"]),
-            # "mlm_loss": batch_metrics["mlm_loss"] / batch_metrics["normalizer"],
             "normalizer" : batch_metrics["normalizer"]
             }
         batch_metrics = defaultdict(lambda:0) 
@@ -288,9 +282,9 @@ training_args = TrainingArguments(
     # https://github.com/facebookresearch/fairseq/blob/main/examples/roberta/README.pretraining.md
     # for an effective batch size of  2048=16*64* 2 GPUS:
     #                                 2048=16*32* 4 GPUS
-        per_device_train_batch_size=32,
-        gradient_accumulation_steps=16,
-        learning_rate=5e-4 if args.model_type == "roberta" else 7e-4, 
+        per_device_train_batch_size=256,
+        gradient_accumulation_steps=8,
+        learning_rate=7e-4 if args.model_type == "roberta" else 7e-4, 
 
         adam_beta1=0.9,
         adam_beta2=0.98,
@@ -303,7 +297,7 @@ training_args = TrainingArguments(
         eval_steps=None if EPOCHS <=10 else 0.1,
         label_names=["labels"], # of eval_dataset
         batch_eval_metrics=True,
-        per_device_eval_batch_size=32,
+        per_device_eval_batch_size=128,
         eval_on_start = True,
 
     # logging

@@ -1,0 +1,33 @@
+args Namespace(model='allenai/OLMo-2-1124-7B-SFT', dataset='allenai/tulu-3-sft-olmo-2-mixture', dataset_split='train[0%:1%]', checkpoint_nr=0, num_processes_gradients=4, gradients_per_file=1000, paradigm='sft', gradients_output_path='./gradients', mode='store', skip_if_gradient_folder_exists=False)
+sft format olmo custom
+dataset[0:1] {'id': ['oasst1_5921'], 'messages': [[{'content': 'Create a snippet of Terraform HCL code that create an AWS autoscaling group, and an ALB in front to expose an application to internet.', 'role': 'user'}, {'content': 'Sure, here\'s an example Terraform HCL code that creates an AWS Autoscaling Group and an Application Load Balancer to expose an application to the internet:\n``` \n# Configure the AWS provider\nprovider "aws" {\n  region = "us-east-1"\n}\n\n# Create a security group to allow traffic to the ALB\nresource "aws_security_group" "alb_sg" {\n  name_prefix = "alb_sg"\n  ingress {\n    from_port = 80\n    to_port = 80\n    protocol = "tcp"\n    cidr_blocks = ["0.0.0.0/0"]\n  }\n}\n\n# Create an ALB and target group\nresource "aws_lb" "alb" {\n  name               = "example-alb"\n  internal           = false\n  load_balancer_type = "application"\n\n  subnets = ["subnet-12345678", "subnet-87654321"]\n\n  security_groups = [aws_security_group.alb_sg.id]\n\n  tags = {\n    Environment = "production"\n  }\n}\n\nresource "aws_lb_target_group" "target_group" {\n  name        = "example-target-group"\n  port        = 80\n  protocol    = "HTTP"\n  vpc_id      = "vpc-12345678"\n\n  health_check {\n    path = "/health"\n  }\n\n  tags = {\n    Environment = "production"\n  }\n}\n\n# Create an autoscaling group\nresource "aws_launch_configuration" "launch_configuration" {\n  name_prefix   = "example-lc-"\n  image_id      = "ami-12345678"\n  instance_type = "t2.micro"\n\n  # Other settings here (e.g. security groups, userdata, etc.)\n}\n\nresource "aws_autoscaling_group" "autoscaling_group" {\n  name                      = "example-asg"\n  launch_configuration      = aws_launch_configuration.launch_configuration.id\n  target_group_arns         = [aws_lb_target_group.target_group.arn]\n  health_check_type         = "EC2"\n  min_size                  = 1\n  max_size                  = 3\n  desired_capacity          = 2\n  vpc_zone_identifier       = ["subnet-12345678", "subnet-87654321"]\n  termination_policies      = ["Default"]\n  wait_for_capacity_timeout = "10m"\n\n  tags = {\n    Environment = "production"\n  }\n}\n``` \nNote that you will need to customize the settings for your specific use case (e.g. specify your own AMI ID, VPC ID, subnet IDs, etc.). This is just an example to give you an idea of how to create an autoscaling group with an ALB in Terraform.', 'role': 'assistant'}]], 'source': ['ai2-adapt-dev/oasst1_converted'], 'dataset': [None], 'input_ids': tensor([100257,     27,     91,  ..., 100277, 100277, 100277]), 'labels': tensor([-100, -100, -100,  ..., -100, -100, -100]), 'attention_mask': tensor([1, 1, 1,  ..., 1, 1, 1])}
+tensor([100257,     27,     91,  ..., 100277, 100277, 100277])
+tensor([-100, -100, -100,  ..., -100, -100, -100])
+torch.cuda.device_count() 0
+0
+0
+0
+0
+out_path ./gradients/OLMo-2-1124-7B-SFT/tulu-3-sft-olmo-2-mixture/train[0%:1%]/main
+wandb: Currently logged in as: loriss to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: Using wandb-core as the SDK backend.  Please refer to https://wandb.me/wandb-core for more information.
+wandb: Tracking run with wandb version 0.19.6
+wandb: Run data is saved locally in /srv/home/users/loriss21cs/babylm/wandb/run-20250317_132431-f0lyeaqe
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run drawn-capybara-1265
+wandb: ⭐️ View project at https://wandb.ai/loriss/babylm_gradient_extraction
+wandb: 🚀 View run at https://wandb.ai/loriss/babylm_gradient_extraction/runs/f0lyeaqe
+2025-03-17 13:24:32,572 - INFO - Getting gradients for checkpoint-main
+checkpoint_path main 0 1000
+loading model
+checkpoint_path main 1000 2000
+loading model
+checkpoint_path main 2000 3000
+loading model
+checkpoint_path main 3000 4000
+loading model
+Loading checkpoint shards:   0%|          | 0/3 [00:00<?, ?it/s]Loading checkpoint shards:   0%|          | 0/3 [00:00<?, ?it/s]Loading checkpoint shards:   0%|          | 0/3 [00:00<?, ?it/s]Loading checkpoint shards:   0%|          | 0/3 [00:00<?, ?it/s]Loading checkpoint shards:  33%|███▎      | 1/3 [00:03<00:07,  3.78s/it]Loading checkpoint shards:  33%|███▎      | 1/3 [00:03<00:07,  3.81s/it]Loading checkpoint shards:  33%|███▎      | 1/3 [00:03<00:07,  3.88s/it]Loading checkpoint shards:  33%|███▎      | 1/3 [00:03<00:07,  3.79s/it]Loading checkpoint shards:  67%|██████▋   | 2/3 [00:07<00:03,  3.83s/it]Loading checkpoint shards:  67%|██████▋   | 2/3 [00:07<00:03,  3.87s/it]Loading checkpoint shards:  67%|██████▋   | 2/3 [00:07<00:03,  3.88s/it]Loading checkpoint shards:  67%|██████▋   | 2/3 [00:07<00:03,  3.84s/it]Loading checkpoint shards: 100%|██████████| 3/3 [00:10<00:00,  3.38s/it]Loading checkpoint shards: 100%|██████████| 3/3 [00:10<00:00,  3.50s/it]
+Loading checkpoint shards: 100%|██████████| 3/3 [00:10<00:00,  3.54s/it]Loading checkpoint shards: 100%|██████████| 3/3 [00:10<00:00,  3.64s/it]
+Loading checkpoint shards: 100%|██████████| 3/3 [00:10<00:00,  3.56s/it]Loading checkpoint shards: 100%|██████████| 3/3 [00:10<00:00,  3.64s/it]
+Loading checkpoint shards: 100%|██████████| 3/3 [00:10<00:00,  3.49s/it]Loading checkpoint shards: 100%|██████████| 3/3 [00:10<00:00,  3.58s/it]
+slurmstepd: error: *** JOB 42352 ON galadriel CANCELLED AT 2025-03-17T13:34:27 ***

@@ -4,7 +4,7 @@ import os
 import shutil
 
 
-CONTAINER_IMAGE = "loris3/cuda:latest"
+CONTAINER_IMAGE = "loris3/babylm:latest"
 NODELIST = "dgx-h100-em2"
 NODELIST_PROCESS = "dgx-h100-em2"
 
@@ -19,17 +19,7 @@ import config
 
 
 
-def submit_script(script, args, debug_id=None):
-    if args.debug:
-        print(f"[DEBUG] {script}")
-        return debug_id
-    else:
-        with open("s.sh", "w") as script_file:
-            script_file.write(script.lstrip("\n"))
-        submit_command = ["sbatch", "s.sh"]
-        
-        extract_process = subprocess.run(submit_command, stdout=subprocess.PIPE, text=True, check=True)
-        return extract_process.stdout.strip().split()[-1] # get SLURM job ID 
+from slurm_utils import submit_script
 from itertools import product
 def main():
     parser = argparse.ArgumentParser(description="Submit SLURM jobs for gradient extraction and influence computation.")
@@ -60,11 +50,12 @@ f"""
 
 python3 --version
 
-python3 pretrain.py {dataset} {curriculum}
+
+python3 pretrain.py {dataset} {curriculum} --model_type={model_type}
 
 """ 
         submit_script(script, args,  debug_id=None)
-        return
+     
 
        
 if __name__ == "__main__":

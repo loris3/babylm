@@ -53,8 +53,12 @@ parser.add_argument("--gradients_output_path", help="The path where to store gra
 parser.add_argument("--mode", help="Eiter 'store', 'mean', or 'mean_normalized'", default="store")
 parser.add_argument("--skip_if_gradient_folder_exists", default=False, action='store_true')
 parser.add_argument("--random_projection", default=False, action='store_true')
+parser.add_argument("--store", default=False, action='store_true')
+
 parser.add_argument("--proj_dim", type=int, nargs="?", const=1, default=2**14)
 args = parser.parse_args()
+
+
 
 print("Args", args, flush=True)
 print("Cuda version:", torch.version.cuda)
@@ -67,6 +71,7 @@ dataset_split_name = args.dataset_split
 # create output dirs
 gradient_output_dir = os.path.join(args.gradients_output_path, str(args.proj_dim) if args.random_projection else "full",model_name, dataset_name, dataset_split_name)
 if not os.path.exists(gradient_output_dir):
+    logging.info(f"created {gradient_output_dir}")
     os.makedirs(gradient_output_dir, exist_ok=True)
 
 
@@ -127,7 +132,7 @@ def get_loss_gradient(model, example,device):
     return torch.autograd.grad(loss, inputs_embeds, retain_graph=False)[0].squeeze()
     
 
-def get_for_checkpoint(model, projector, checkpoint_path, i_start, i_end):
+def get_for_checkpoint(model, projector, checkpoint_path, out_dir, i_start, i_end):
     """Calculates gradients at a given checkpoint for a given subset and stores it to disk
 
     Args:
@@ -145,11 +150,14 @@ def get_for_checkpoint(model, projector, checkpoint_path, i_start, i_end):
             data_collator.set_epoch(util.get_epoch(checkpoint_path)) # to ensure the same masking as during training
 
 
-        out_dir = os.path.join(gradient_output_dir, os.path.basename(checkpoint_path))
-        out_path = os.path.join(gradient_output_dir, os.path.basename(checkpoint_path), args.mode) if "mean" in args.mode else os.path.join(gradient_output_dir, os.path.basename(checkpoint_path),str(i_start) + "_" + str(i_end))
+
+        out_path_mode = os.path.join(out_dir, args.mode) 
+        out_path_store = os.path.join(out_dir,str(i_start) + "_" + str(i_end))
+
         os.makedirs(out_dir,exist_ok=True)
-        if os.path.isfile(out_path):
-            logging.info(f"{log_prefix} skipping {out_path}, already stored")
+        if ("mean" in args.mode and os.path.isfile(out_path_mode) or "mean" not in args.mode) and \
+        (args.store and os.path.isfile(out_path_store) or not args.store):
+            logging.info(f"{log_prefix} skipping {out_dir} {i_start} {i_end} already stored")
             return 
       
         
@@ -175,16 +183,15 @@ def get_for_checkpoint(model, projector, checkpoint_path, i_start, i_end):
                                     for i in tqdm(range(i_start, min(i_end, len(dataset)-1)), desc=f"{log_prefix} is getting gradients...")
                                 ])
         logging.debug(f"{log_prefix} ... got gradients")
-        if args.mode == "store":
-            torch.save( gradients, out_path)
+        if args.store:
+            torch.save( gradients, out_path_store)
             logging.info(f"{log_prefix} stored gradients to {out_path}")
-        elif args.mode == "mean":
+        if "mean" == args.mode:
             logging.info(f"{log_prefix} partial sum")
             return torch.sum(gradients, axis=0)
-        elif args.mode == "mean_normalized":
+        elif "mean_normalized" == args.mode:
             logging.info(f"{log_prefix} partial sum normalized")
             return torch.nn.functional.normalize(gradients, dim=1).sum(axis=0) # vanja: normalize before aggregating for cosine similarity
-           
         else:
             raise NotImplementedError
         del gradients
@@ -284,65 +291,75 @@ if __name__ == '__main__':
     
     out_path = os.path.join(gradient_output_dir, os.path.basename(checkpoint))
     
-    if "mean" in args.mode and os.path.isfile(os.path.join(out_path,args.mode)):
-        logging.info("Skipping {}, already calculated".format(out_path) )
-    elif args.mode == "store" and os.path.isdir(out_path) and len(os.listdir(out_path)) == 0 and args.skip_if_gradient_folder_exists:
-        logging.info("Skipping {}, because folder exists (--skip_if_gradient_folder_exists) and is empty".format(out_path) )
+    # if "mean" in args.mode and os.path.isfile(os.path.join(out_path,args.mode)):
+    #     logging.info("Skipping {}, already calculated".format(out_path) )
+
+
+
+
+    # elif "store" in args.mode and os.path.isdir(out_path) and len(os.listdir(out_path)) == 0 and args.skip_if_gradient_folder_exists:
+    #     logging.info("Skipping {}, because folder exists (--skip_if_gradient_folder_exists) and is empty".format(out_path) )
+    # else:
+
+
+
+
+    
+    logging.info(f"writing results to {out_path}")
+
+    run = wandb.init(project="gradient_extraction")
+    run.name = os.path.join(args.model, os.getenv("SLURM_JOB_NAME", "?"))
+
+    
+    model = None
+
+    logging.info(f"loading model {args.model}...")
+
+    if "llama" in args.model:
+        model_config = AutoConfig.from_pretrained(checkpoint)
+        model = LlamaForCausalLM(config=model_config).to(device)
+    elif "OLMo" in args.model:
+        model = AutoModelForCausalLM.from_pretrained(args.model, revision=checkpoint, torch_dtype=torch.float16).to(device)
     else:
-        
-        logging.info(f"writing results to {out_path}")
+        model_config = AutoConfig.from_pretrained(checkpoint)
+        model = RobertaForMaskedLM(config=model_config).to(device)
+    model.train()
+    logging.info(f"... loading done")
 
-        run = wandb.init(project="gradient_extraction")
-        run.name = os.path.join(args.model, os.getenv("SLURM_JOB_NAME", "?"))
+    
 
-      
-        model = None
- 
-        logging.info(f"loading model {args.model}...")
+    
+    
+    projector = None
+    if args.random_projection:
+        grad_dim = None
+        logging.debug(f"inferring projection parameters ...")
+        grad_dim = get_loss_gradient(model, dataset[0], device).detach().flatten().unsqueeze(0).shape[-1]
+        logging.debug(f"... using grad_dim={grad_dim} proj_dim={args.proj_dim} ...")
+        projector = CudaProjector(grad_dim=grad_dim, proj_dim=args.proj_dim,seed=42, proj_type=ProjectionType.rademacher,device=device, max_batch_size=8)
+        logging.info(f"... set up projector done")
+    else:
+        logging.info(f"storing full gradients")
+        projector = NoOpProjector()
+    
+    
+    results = []
+    for i in range(0, len(dataset), args.gradients_per_file): 
+        start_time = time.time()
 
-        if "llama" in args.model:
-            model_config = AutoConfig.from_pretrained(checkpoint)
-            model = LlamaForCausalLM(config=model_config).to(device)
-        elif "OLMo" in args.model:
-            model = AutoModelForCausalLM.from_pretrained(args.model, revision=checkpoint, torch_dtype=torch.float16).to(device)
-        else:
-            model_config = AutoConfig.from_pretrained(checkpoint)
-            model = RobertaForMaskedLM(config=model_config).to(device)
-        model.train()
-        logging.info(f"... loading done")
+        results.append(get_for_checkpoint(model, projector, checkpoint,out_path,i, i + args.gradients_per_file))   
 
+        run.log({"gradients/time_per_chunk": time.time()-start_time},commit=False)
+        run.log({"gradients/time_per_example": (time.time()-start_time)/args.gradients_per_file},commit=True)
         
     
-        
-        
-        projector = None
-        if args.random_projection:
-            grad_dim = None
-            logging.debug(f"inferring projection parameters ...")
-            grad_dim = get_loss_gradient(model, dataset[0], device).detach().flatten().unsqueeze(0).shape[-1]
-            logging.debug(f"... using grad_dim={grad_dim} proj_dim={args.proj_dim} ...")
-            projector = CudaProjector(grad_dim=grad_dim, proj_dim=args.proj_dim,seed=42, proj_type=ProjectionType.rademacher,device=device, max_batch_size=8)
-            logging.info(f"... set up projector done")
-        else:
-            logging.info(f"storing full gradients")
-            projector = NoOpProjector()
-       
-        
-        results = []
-        for i in range(0, len(dataset), args.gradients_per_file): 
-            start_time = time.time()
+    if "mean" in args.mode:
+        logging.info("aggregating mean gradients")
+        t = torch.stack(results).sum(axis=0) / len(dataset)
 
-            results.append(get_for_checkpoint(model, projector, checkpoint,i, i + args.gradients_per_file))   
+        out_path_mode = os.path.join(out_dir, args.mode) 
+        torch.save(t, out_path_mode)
+        logging.info(f"stored mean gradients")
 
-            run.log({"gradients/time_per_chunk": time.time()-start_time},commit=False)
-            run.log({"gradients/time_per_example": (time.time()-start_time)/args.gradients_per_file},commit=True)
-          
-        
-        if "mean" in args.mode:
-            logging.info("aggregating mean gradients")
-            t = torch.stack(results).sum(axis=0) / len(dataset)
-            torch.save(t, os.path.join(out_path, "mean"))
-            logging.info(f"stored mean gradients")
-
-        logging.info(f"task complete!")
-        run.finish()
+    logging.info(f"task complete!")
+    run.finish()

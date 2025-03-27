@@ -4,7 +4,7 @@ import os
 import shutil
 
 
-CONTAINER_IMAGE = "loris3/cuda:latest"
+CONTAINER_IMAGE = "loris3/babylm:latest"
 NODELIST_EXTRACT = "dgx-h100-em2"
 NODELIST_PROCESS = "dgx-h100-em2"
 
@@ -39,13 +39,14 @@ def main():
     parser.add_argument("--test_datasets", type=str, nargs="+", help="List of dataset_name split_name pairs.")
         
     parser.add_argument("--stop_after_first", action="store_true", help="Only run for first superbatch")
+    parser.add_argument("--gradients_per_file", help="Number of gradients per output file", type=int, nargs="?", const=1, default=1000) # 10000 = ~7.4 GB per file for BERT
 
     parser.add_argument("--debug", action="store_true", help="Log commands instead of executing them.")
     parser.add_argument("--superbatches",help="Times the training dataset should be split", type=int, default=1)
     parser.add_argument("--paradigm", help="One of 'mlm', 'pre' or 'sft'", default="pre")
     parser.add_argument("--mode", help="One of 'single', 'mean', 'mean_normalized'.If 'mean', mean influence of individual train on all examples in test; if 'single' 1 train -> 1 test", default="single")
     parser.add_argument("--random_projection", default=False, action='store_true')
-
+    parser.add_argument("--store", default=False, action='store_true')
     class SplitArgs(argparse.Action):
         def __call__(self, parser, namespace, values, option_string=None):
             setattr(namespace, self.dest, [int(i) for i in values.split(",")])
@@ -57,7 +58,7 @@ def main():
     
     args = parser.parse_args()
 
-
+    assert args.store or ("mean" in args.mode), "Check args: nothing is stored"
 
     test_datasets = [(args.test_datasets[i], args.test_datasets[i+1] + "[0%:100%]" if not "[" in args.test_datasets[i+1] else args.test_datasets[i+1]) for i in range(0, len(args.test_datasets), 2)]
 
@@ -103,8 +104,10 @@ python3 extract_gradients.py \
 {checkpoint_id} \
 --dataset_split={test_dataset_split} \
 --paradigm={args.paradigm} \
---mode={args.mode if "mean" in args.mode else "store"} \
-{"--random_projection" if args.random_projection else ""}
+--gradients_per_file={args.gradients_per_file} \
+--mode={args.mode} \
+{"--random_projection" if args.random_projection else ""} \
+{"--store" if args.store else ""}
 """
 
 
@@ -124,8 +127,9 @@ python3 extract_gradients.py \
             # if train_dataset_split not in ["train[17%:18%]","train[18%:19%]"]:
             #     print("skipping", train_dataset_split)
             #     continue
-     
-            extract_script_train = \
+            job_id_gradients_train = None
+            if train_dataset_split != test_dataset_name + test_dataset_split:
+                extract_script_train = \
 f"""
 #!/bin/bash
 #SBATCH --job-name="[IE Experiments] Extracting Gradients {train_dataset_split} (checkpoint {checkpoint_id})"
@@ -148,15 +152,16 @@ python3 extract_gradients.py \
 {checkpoint_id} \
 --dataset_split={train_dataset_split} \
 --paradigm={args.paradigm} \
+--gradients_per_file={args.gradients_per_file} \
 --mode=store \
-{"--random_projection" if args.random_projection else ""}
+{"--random_projection" if args.random_projection else ""} \
+{"--store" if args.store else ""}
 """
 
 
           
-            job_id_gradients_train = submit_script(extract_script_train, args, debug_id=f"job_{checkpoint_id}_{train_dataset_split}_extract")
-
-
+                job_id_gradients_train = submit_script(extract_script_train, args, debug_id=f"job_{checkpoint_id}_{train_dataset_split}_extract")
+           
             ##############
             # influence computation
             # per test dataset
@@ -167,7 +172,7 @@ python3 extract_gradients.py \
             
      
                 # create one influence estimation job so that subsequent test sets re-use gradients cached on /tmp
-                
+            dependency = f"{job_id_gradients_train}:{':'.join(job_ids_test_sets)}" if job_id_gradients_train is not None else f"{':'.join(job_ids_test_sets)}"
             process_script = \
 f"""
 #!/bin/bash
@@ -180,7 +185,7 @@ f"""
 #SBATCH --time={TIME_PROCESS}
 #SBATCH --container-workdir={os.getcwd()}
 #SBATCH --nodelist={NODELIST_PROCESS}
-#SBATCH --dependency=afterok:{job_id_gradients_train}:{':'.join(job_ids_test_sets)}
+#SBATCH --dependency=afterok:{dependency}
 
 python3 --version
 
@@ -199,6 +204,7 @@ python3 process_gradients.py \
     --dataset_train_split={train_dataset_split} \
     --dataset_test={test_dataset_name} \
     --dataset_test_split={test_dataset_split} \
+    --gradients_per_file={args.gradients_per_file} \
     --mode={args.mode} \
     --batch_size=10
     """
@@ -231,7 +237,7 @@ f"""
 checkpoint_name=$(python3 get_checkpoint_name.py {args.model} {str(checkpoint_id)})
 
 
-rm -r ./gradients/{args.proj_dim}/{os.path.basename(args.model)}/{os.path.basename(args.dataset_train)}/{train_dataset_split}/$checkpoint_name/*
+# rm -r ./gradients/{args.proj_dim}/{os.path.basename(args.model)}/{os.path.basename(args.dataset_train)}/{train_dataset_split}/$checkpoint_name/*
 
 echo deleted "./gradients/{args.proj_dim}/{os.path.basename(args.model)}/{os.path.basename(args.dataset_train)}/{train_dataset_split}/$checkpoint_name/*"
 

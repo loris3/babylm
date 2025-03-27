@@ -50,7 +50,7 @@ os.environ["WANDB_PROJECT"]="pretraining"
 
 datasets = load_dataset(args.dataset)
 
-model_path =  os.path.join("models/", args.dataset.split("/")[-1] + ("_" + args.model_type if args.model_type != "roberta" else "") + "_" +args.curriculum.split(".")[0])
+model_path =  os.path.join("models/", args.dataset.split("/")[-1] + ("_" + args.model_type) + "_" +args.curriculum.split(".")[0])
 if not os.path.exists(model_path):
     os.makedirs(model_path)
 
@@ -265,7 +265,7 @@ llama_config = LlamaConfig(
     )
 
 EPOCHS = len(util.get_curriculum(args.dataset, args.curriculum)) # note that an epoch is not necesarilly a pass over the entire dataset anymore
-
+print("EPOCHS",EPOCHS)
 
 training_args = TrainingArguments(
     seed=42,
@@ -282,9 +282,9 @@ training_args = TrainingArguments(
     # https://github.com/facebookresearch/fairseq/blob/main/examples/roberta/README.pretraining.md
     # for an effective batch size of  2048=16*64* 2 GPUS:
     #                                 2048=16*32* 4 GPUS
-        per_device_train_batch_size=256,
-        gradient_accumulation_steps=8,
-        learning_rate=7e-4 if args.model_type == "roberta" else 7e-4, 
+        per_device_train_batch_size=32,
+        gradient_accumulation_steps=16,
+        learning_rate=5e-4 if args.model_type == "roberta" else 7e-4, 
 
         adam_beta1=0.9,
         adam_beta2=0.98,
@@ -298,7 +298,7 @@ training_args = TrainingArguments(
         label_names=["labels"], # of eval_dataset
         batch_eval_metrics=True,
         per_device_eval_batch_size=128,
-        eval_on_start = True,
+        eval_on_start = False,
 
     # logging
         report_to="wandb", 
@@ -341,7 +341,5 @@ for checkpoint_path in get_epoch_checkpoints(model_path):
         path_in_repo="checkpoints/" + os.path.basename(checkpoint_path),
         repo_id=api.whoami()["name"] + "/" + model_name,
         repo_type="model",
-        multi_commits=True,
-        multi_commits_verbose=True,
         create_pr=False,
     )

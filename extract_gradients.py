@@ -155,14 +155,20 @@ def get_for_checkpoint(model, projector, checkpoint_path, out_dir, i_start, i_en
         out_path_store = os.path.join(out_dir,str(i_start) + "_" + str(i_end))
 
         os.makedirs(out_dir,exist_ok=True)
-        if ("mean" in args.mode and os.path.isfile(out_path_mode) or "mean" not in args.mode) and \
+        
+            
+        gradients = None
+        if os.path.isfile(out_path_store) and ("mean" in args.mode and not os.path.isfile(out_path_mode)):
+            logging.info(f"{log_prefix} getting mean for {out_dir} {i_start} {i_end} already stored")
+            gradients = torch.load(out_path_store)
+        elif ("mean" in args.mode and os.path.isfile(out_path_mode) or "mean" not in args.mode) and \
         (args.store and os.path.isfile(out_path_store) or not args.store):
             logging.info(f"{log_prefix} skipping {out_dir} {i_start} {i_end} already stored")
             return 
       
         
     
-        gradients = None
+        
         
         logging.debug(f"{log_prefix} is getting gradients...")
 
@@ -171,19 +177,19 @@ def get_for_checkpoint(model, projector, checkpoint_path, out_dir, i_start, i_en
             p = projector.project(x, model_id=0)
             return p
 
-              
-        gradients = torch.stack([ 
-                                    project(
-                                        get_loss_gradient(
-                                            model, 
-                                            dataset[i],
-                                            device
-                                        ).detach().flatten().unsqueeze(0).half()
-                                    ).cpu() 
-                                    for i in tqdm(range(i_start, min(i_end, len(dataset)-1)), desc=f"{log_prefix} is getting gradients...")
-                                ])
+        if gradients is None:      
+            gradients = torch.stack([ 
+                                        project(
+                                            get_loss_gradient(
+                                                model, 
+                                                dataset[i],
+                                                device
+                                            ).detach().flatten().unsqueeze(0).half()
+                                        ).cpu() 
+                                        for i in tqdm(range(i_start, min(i_end, len(dataset)-1)), desc=f"{log_prefix} is getting gradients...")
+                                    ])
         logging.debug(f"{log_prefix} ... got gradients")
-        if args.store:
+        if args.store and not os.path.isfile(out_path_store):
             torch.save( gradients, out_path_store)
             logging.info(f"{log_prefix} stored gradients to {out_path}")
         if "mean" == args.mode:
@@ -352,12 +358,13 @@ if __name__ == '__main__':
         run.log({"gradients/time_per_chunk": time.time()-start_time},commit=False)
         run.log({"gradients/time_per_example": (time.time()-start_time)/args.gradients_per_file},commit=True)
         
-    
-    if "mean" in args.mode:
+    out_path_mode = os.path.join(out_path, args.mode) 
+    if "mean" in args.mode and not os.path.isfile(out_path_mode):
         logging.info("aggregating mean gradients")
-        t = torch.stack(results).sum(axis=0) / len(dataset)
+        print(len(dataset))
+        t = torch.nn.functional.normalize(torch.stack(results).sum(axis=0) / len(dataset)) # normalize mean of normalized gradients to get (newly) normalized gradient
 
-        out_path_mode = os.path.join(out_dir, args.mode) 
+        
         torch.save(t, out_path_mode)
         logging.info(f"stored mean gradients")
 

@@ -48,3 +48,5 @@ noise/*
 results_noise
 s.sh
 difficulty_mattr
+eval
+influence_mean_normalized/

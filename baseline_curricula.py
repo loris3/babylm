@@ -95,3 +95,53 @@ def get_mattr(dataset_name="loris3/stratified_10m_curriculum", n_proc=24):
         df.to_parquet(os.path.join(out_path, "mattr"))
 
     return pd.read_parquet(os.path.join(out_path, "mattr"))
+
+
+from huggingface_hub import HfApi
+
+def upload(filename, tensor, dataset, DEBUG=False):
+    assert ".pt" in filename
+    api = HfApi()
+    HF_USERNAME = api.whoami()["name"]
+    path = HF_USERNAME + "/" + dataset
+
+    torch.save(tensor, filename)
+    if not DEBUG:
+        api.upload_file(
+                path_or_fileobj="./" + filename,
+                path_in_repo=filename,
+                repo_id= dataset,
+                repo_type="dataset"
+            )
+    else:
+        print("skipping upload of", filename, tensor)
+    os.remove(filename)
+
+def split_into_epochs(l, EPOCHS=10):
+    return torch.tensor_split(torch.tensor(l), EPOCHS)
+def repeat_for_ten_epochs(l, EPOCHS=10):
+    return [torch.tensor(l) for _ in range(0,EPOCHS)]
+
+
+# verify compliance with babylm 10*10M track
+
+
+from util import get_curriculum
+from itertools import product
+import torch
+
+word_count = lambda d: {"words" : len(d["text"].split())}
+
+def validate_training_duration_limitation(dataset_name, curriculum):
+    dataset = load_dataset(dataset_name)
+    curriculum = get_curriculum(dataset_name, curriculum) if isinstance(curriculum, str) else curriculum
+    curriculum = torch.cat(curriculum).flatten()
+
+    word_counts = dataset["train"].map(word_count, num_proc=100)
+    training_data = word_counts.select(curriculum)
+    total_words_seen = sum(training_data["words"])
+    print(f"[{dataset_name} -> {curriculum}] {total_words_seen} words : {len(training_data)} documents")
+    assert total_words_seen <= 10*10000000
+    assert total_words_seen >= 9*10000000
+    return True
+

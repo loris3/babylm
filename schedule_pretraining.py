@@ -5,8 +5,8 @@ import shutil
 
 
 CONTAINER_IMAGE = "loris3/babylm:latest"
-NODELIST = "dgx-h100-em2"
-NODELIST_PROCESS = "dgx-h100-em2"
+NODELIST = "dgx1"#"dgx-h100-em2"
+
 
 
 MEM = "128G"

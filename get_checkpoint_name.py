@@ -8,6 +8,8 @@ import argparse
 from util import get_checkpoints_hub
 
 
+import os
+
 
 parser = argparse.ArgumentParser("")
 parser.add_argument("model", help="A model on the hf hub. Format: username/name_curriculum")
@@ -17,4 +19,4 @@ args = parser.parse_args()
 
 
 if __name__ == "__main__":
-    print(get_checkpoints_hub(args.model)[args.checkpoint_nr])
+    print(os.path.basename(get_checkpoints_hub(args.model)[args.checkpoint_nr]))

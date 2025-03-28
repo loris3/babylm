@@ -5,12 +5,12 @@ import shutil
 
 
 CONTAINER_IMAGE = "loris3/babylm:latest"
-NODELIST_EXTRACT = "dgx-h100-em2"
-NODELIST_PROCESS = "dgx-h100-em2"
+NODELIST_EXTRACT = "dgx1"
+NODELIST_PROCESS = "dgx1,dgx-h100-em2"
 
 
-MEM_EXTRACT = "124G"
-MEM_PROCESS = "355GB"
+MEM_EXTRACT = "64GB"
+MEM_PROCESS = "128GB"
 TIME_EXTRACT_TEST ="0-12:00:00"
 
 TIME_EXTRACT_TRAIN_PER_SUPERCHUNK ="0-12:00:00"
@@ -89,7 +89,7 @@ f"""
 #SBATCH --container-image={CONTAINER_IMAGE}
 #SBATCH --container-mount-home 
 #SBATCH --mem={MEM_EXTRACT} 
-#SBATCH --cpus-per-task=24  
+#SBATCH --cpus-per-task=12  
 #SBATCH --gres=gpu:1
 #SBATCH --time={TIME_EXTRACT_TEST}
 #SBATCH --container-workdir={os.getcwd()}
@@ -128,47 +128,50 @@ python3 extract_gradients.py \
             #     print("skipping", train_dataset_split)
             #     continue
             job_id_gradients_train = None
-            if train_dataset_split != test_dataset_name + test_dataset_split:
+
+
+            if (test_dataset_name != args.dataset_train) or  (train_dataset_split  != test_dataset_split):
                 extract_script_train = \
-f"""
-#!/bin/bash
-#SBATCH --job-name="[IE Experiments] Extracting Gradients {train_dataset_split} (checkpoint {checkpoint_id})"
-#SBATCH --container-image={CONTAINER_IMAGE}
-#SBATCH --container-mount-home 
-#SBATCH --mem={MEM_EXTRACT} 
-#SBATCH --cpus-per-task=24  
-#SBATCH --gres=gpu:1
-#SBATCH --time={TIME_EXTRACT_TRAIN_PER_SUPERCHUNK}
-#SBATCH --container-workdir={os.getcwd()}
-#SBATCH --nodelist={NODELIST_EXTRACT}
-#SBATCH --dependency=afterok:{":".join([str(i) for i in job_ids_test_sets])}
+            f"""
+            #!/bin/bash
+            #SBATCH --job-name="[IE Experiments] Extracting Gradients {train_dataset_split} (checkpoint {checkpoint_id})"
+            #SBATCH --container-image={CONTAINER_IMAGE}
+            #SBATCH --container-mount-home 
+            #SBATCH --mem={MEM_EXTRACT} 
+            #SBATCH --cpus-per-task=24  
+            #SBATCH --gres=gpu:1
+            #SBATCH --time={TIME_EXTRACT_TRAIN_PER_SUPERCHUNK}
+            #SBATCH --container-workdir={os.getcwd()}
+            #SBATCH --nodelist={NODELIST_EXTRACT}
+            #SBATCH --dependency=afterok:{":".join([str(i) for i in job_ids_test_sets])}
 
 
-python3 --version
+            python3 --version
 
-python3 extract_gradients.py \
-{args.model} \
-{args.dataset_train} \
-{checkpoint_id} \
---dataset_split={train_dataset_split} \
---paradigm={args.paradigm} \
---gradients_per_file={args.gradients_per_file} \
---mode=store \
-{"--random_projection" if args.random_projection else ""} \
-{"--store" if args.store else ""}
-"""
+            python3 extract_gradients.py \
+            {args.model} \
+            {args.dataset_train} \
+            {checkpoint_id} \
+            --dataset_split={train_dataset_split} \
+            --paradigm={args.paradigm} \
+            --gradients_per_file={args.gradients_per_file} \
+            --mode=store \
+            {"--random_projection" if args.random_projection else ""} \
+            {"--store" if args.store else ""}
+            """
 
 
           
                 job_id_gradients_train = submit_script(extract_script_train, args, debug_id=f"job_{checkpoint_id}_{train_dataset_split}_extract")
-           
+            else:
+                print("fff skipping train")
             ##############
             # influence computation
             # per test dataset
             # per superbatch
             
 
-            job_ids_test_set_influence = []
+            job_ids_processing = []
             
      
                 # create one influence estimation job so that subsequent test sets re-use gradients cached on /tmp
@@ -181,11 +184,11 @@ f"""
 #SBATCH --container-mount-home 
 #SBATCH --mem={MEM_PROCESS} 
 #SBATCH --cpus-per-task=24  
-#SBATCH --gres=gpu:0
 #SBATCH --time={TIME_PROCESS}
 #SBATCH --container-workdir={os.getcwd()}
 #SBATCH --nodelist={NODELIST_PROCESS}
-#SBATCH --dependency=afterok:{dependency}
+#SBATCH --dependency={dependency}
+
 
 python3 --version
 
@@ -206,13 +209,14 @@ python3 process_gradients.py \
     --dataset_test_split={test_dataset_split} \
     --gradients_per_file={args.gradients_per_file} \
     --mode={args.mode} \
+    {"--random_projection" if args.random_projection else ""} \
     --batch_size=10
     """
                 process_script += f'\n{c}'
 
 
-            job_id_influence = submit_script(process_script, args, debug_id=f"job_{checkpoint_id}_{train_dataset_split}_influence_{test_dataset_name}{test_dataset_split}")
-            job_ids_test_set_influence.append(job_id_influence)
+            job_id_processing = submit_script(process_script, args, debug_id=f"job_{checkpoint_id}_{train_dataset_split}_influence_{test_dataset_name}{test_dataset_split}")
+            job_ids_processing.append(job_id_processing)
     
             if args.stop_after_first:
                 print("[DEBUG] stopping after first superbatch")
@@ -227,12 +231,11 @@ f"""
 #SBATCH --container-image={CONTAINER_IMAGE}
 #SBATCH --container-mount-home 
 #SBATCH --mem={MEM_PROCESS} 
-#SBATCH --cpus-per-task=24  
-#SBATCH --gres=gpu:0
+#SBATCH --cpus-per-task=1  
 #SBATCH --container-workdir={os.getcwd()}
 #SBATCH --nodelist={NODELIST_PROCESS}
 
-#SBATCH --dependency=afterok:{':'.join(job_ids_test_set_influence)}
+#SBATCH --dependency=afterok:{':'.join(job_ids_processing)}
 
 checkpoint_name=$(python3 get_checkpoint_name.py {args.model} {str(checkpoint_id)})
 

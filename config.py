@@ -6,8 +6,9 @@ datasets = [
 ]
 curricula = [
    "random.pt",
-#    "mattr_increasing.pt",
-#    "perplexity_increasing.pt"
+   "source_difficulty.pt",
+   "mattr_increasing.pt",
+   "perplexity_increasing.pt"
 
 ]
 

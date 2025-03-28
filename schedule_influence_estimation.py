@@ -39,7 +39,7 @@ def main():
             "--store",
             "--random_projection",
             "--n_checkpoints", "10",
-            # "--debug"
+      
         ]
 
         # Run the script

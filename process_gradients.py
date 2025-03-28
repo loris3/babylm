@@ -241,11 +241,11 @@ if __name__ == '__main__':
         else:
             result_checkpoint = torch.zeros((len(dataset_train)))
         if args.mode == "single":
-            for result, start_id_a, stop_id_a, start_id_b, stop_id_b in results[0]:
+            for result, start_id_a, stop_id_a, start_id_b, stop_id_b in r[0]:
                 result_checkpoint[start_id_a:start_id_a+result.shape[0], start_id_b:start_id_b+result.shape[1]] = result
             result_checkpoint = (result_checkpoint / len(dataset_test)).unsqueeze(0) 
         else:
-            for rr in results:
+            for rr in r:
                 for task, result in zip(*rr):
                     chunk_path_a, start_id_a, stop_id_a = task
                     print("chunk_path_a, start_id_a, stop_id_a",chunk_path_a, start_id_a, stop_id_a, flush=True)

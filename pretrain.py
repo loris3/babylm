@@ -156,15 +156,23 @@ class OrderedSampler(SequentialSampler):
 
 # load and pre-tokenize the dataset (TODO unclear if that actually increases peformance with our custom dataloader and datacollator)
 
-t = lambda x : tokenizer(x["text"], return_special_tokens_mask=True, truncation=True, max_length=512)
+def tokenize(x):
+    result = tokenizer(x["text"], return_special_tokens_mask=True, truncation=True, max_length=512)
+
+    # hotfix: some curriculum creation strategies cause batches made exclusively from empty strings in rare edge cases
+    # prevent error in hf implementation by just returning a pad token
+    if (len(result["input_ids"]) == 0) and ("random" not in args.curriculum):
+        return tokenizer("<pad>", return_special_tokens_mask=True, truncation=True, max_length=512)
+    else:
+        return result
 
 dataset = datasets["train"]
-dataset = dataset.map(t)
+dataset = dataset.map(tokenize)
 dataset = dataset.remove_columns(["text"]) 
 dataset.set_format("torch")
 
 dataset_eval = datasets["validation"]
-dataset_eval = dataset_eval.map(t)
+dataset_eval = dataset_eval.map(tokenize)
 dataset_eval = dataset_eval.remove_columns(["text"]) 
 dataset_eval.set_format("torch")
 

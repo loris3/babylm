@@ -132,16 +132,27 @@ import torch
 
 word_count = lambda d: {"words" : len(d["text"].split())}
 
-def validate_training_duration_limitation(dataset_name, curriculum):
-    dataset = load_dataset(dataset_name)
-    curriculum = get_curriculum(dataset_name, curriculum) if isinstance(curriculum, str) else curriculum
+
+def count_tokens_seen(dataset, curriculum):
     curriculum = torch.cat(curriculum).flatten()
 
-    word_counts = dataset["train"].map(word_count, num_proc=100)
+    word_counts = dataset.map(word_count, num_proc=100)
     training_data = word_counts.select(curriculum)
     total_words_seen = sum(training_data["words"])
-    print(f"[{dataset_name} -> {curriculum}] {total_words_seen} words : {len(training_data)} documents")
+    return total_words_seen
+
+def count_tokens_dataset(dataset):
+    word_counts = dataset.map(word_count, num_proc=100)
+    return sum(word_counts["words"])
+
+def validate_training_duration_limitation(dataset_name, curriculum):
+    dataset = load_dataset(dataset_name)["train"]
+    curriculum = get_curriculum(dataset_name, curriculum) if isinstance(curriculum, str) else curriculum
+    assert len(curriculum) == 10
+    total_words_seen = count_tokens_seen(dataset, curriculum)
+    print("total_words_seen",dataset_name,total_words_seen)
     assert total_words_seen <= 10*10000000
     assert total_words_seen >= 9*10000000
+    
     return True
 

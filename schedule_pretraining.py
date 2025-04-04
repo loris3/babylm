@@ -5,12 +5,12 @@ import shutil
 
 
 CONTAINER_IMAGE = "loris3/babylm:latest"
-NODELIST = "dgx1"#"dgx-h100-em2"
+NODELIST = "dgx-h100-em2"
 
 
 
 MEM = "128G"
-TIME ="0-12:00:00"
+TIME ="0-05:00:00"
 
 
 
@@ -23,21 +23,31 @@ from slurm_utils import submit_script
 from itertools import product
 def main():
     parser = argparse.ArgumentParser(description="Submit SLURM jobs for gradient extraction and influence computation.")
+    parser.add_argument("stage", help="Either 'baselines' or 'influence'")
     parser.add_argument("--debug", action="store_true", help="Log commands instead of executing them.")
 
     
     args = parser.parse_args()
 
 
-    jobs = list(product(config.datasets, config.model_types, config.curricula))
-    print(len(jobs))
+    jobs = None
+    if args.stage == "baselines":
+        jobs = list(product(config.datasets, config.model_types, config.baseline_curricula))  
+    else:
+        jobs = [(dataset, model_type, model_type + curriculum) for dataset, model_type, curriculum in product(config.datasets, config.model_types, config.influence_curricula)]
+        # skip influence curricula jobs with non-exisitng local "random" model folder
+        jobs = [job for job in jobs if  os.path.exists(os.path.join("models", os.path.basename(job[0]) + "_" + job[1] + "_" + "random"))]
 
+    # skip jobs with existing local model folder
+    jobs = [job for job in jobs if not os.path.exists(os.path.join("models", os.path.basename(job[0]) + "_" + job[1] + "_" + job[2].replace(".pt","")))]
+    print(jobs)
+    
     for dataset, model_type, curriculum in jobs:
          
         script = \
 f"""
 #!/bin/bash
-#SBATCH --job-name="[BabyLM] Pretraining {dataset}, {model_type}, {curriculum}"
+#SBATCH --job-name="[BabyLM] Pretraining (singleton)"
 #SBATCH --container-image={CONTAINER_IMAGE}
 #SBATCH --container-mount-home 
 #SBATCH --mem={MEM} 
@@ -46,7 +56,8 @@ f"""
 #SBATCH --time={TIME}
 #SBATCH --container-workdir={os.getcwd()}
 #SBATCH --nodelist={NODELIST}
-
+#SBATCH --nodes=1
+#SBATCH --dependency=singleton
 
 python3 --version
 
@@ -54,6 +65,7 @@ python3 --version
 python3 pretrain.py {dataset} {curriculum} --model_type={model_type}
 
 """ 
+
         submit_script(script, args,  debug_id=None)
      
 

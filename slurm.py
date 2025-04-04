@@ -11,9 +11,9 @@ NODELIST_PROCESS = "dgx1,dgx-h100-em2"
 
 MEM_EXTRACT = "64GB"
 MEM_PROCESS = "128GB"
-TIME_EXTRACT_TEST ="0-12:00:00"
+TIME_EXTRACT_TEST ="0-19:00:00"
 
-TIME_EXTRACT_TRAIN_PER_SUPERCHUNK ="0-12:00:00"
+TIME_EXTRACT_TRAIN_PER_SUPERCHUNK ="0-19:00:00"
 TIME_PROCESS ="0-12:00:00"
 
 def submit_script(script, args, debug_id=None):
@@ -94,9 +94,11 @@ f"""
 #SBATCH --time={TIME_EXTRACT_TEST}
 #SBATCH --container-workdir={os.getcwd()}
 #SBATCH --nodelist={NODELIST_EXTRACT}
-
-
+#SBATCH --nice
+#SBATCH --nodes=1
 python3 --version
+
+df -h
 
 python3 extract_gradients.py \
 {args.model} \
@@ -144,7 +146,9 @@ python3 extract_gradients.py \
             #SBATCH --container-workdir={os.getcwd()}
             #SBATCH --nodelist={NODELIST_EXTRACT}
             #SBATCH --dependency=afterok:{":".join([str(i) for i in job_ids_test_sets])}
+            #SBATCH --nodes=1
 
+            df -h
 
             python3 --version
 
@@ -188,8 +192,9 @@ f"""
 #SBATCH --container-workdir={os.getcwd()}
 #SBATCH --nodelist={NODELIST_PROCESS}
 #SBATCH --dependency={dependency}
+#SBATCH --nodes=1
 
-
+df -h
 python3 --version
 
 """
@@ -234,6 +239,7 @@ f"""
 #SBATCH --cpus-per-task=1  
 #SBATCH --container-workdir={os.getcwd()}
 #SBATCH --nodelist={NODELIST_PROCESS}
+#SBATCH --nodes=1
 
 #SBATCH --dependency=afterok:{':'.join(job_ids_processing)}
 

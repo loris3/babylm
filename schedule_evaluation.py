@@ -15,12 +15,13 @@ from itertools import product
 from slurm_utils import submit_script
 
 CONTAINER_IMAGE = "loris3/babylm:eval"
-NODELIST = "dgx1"
+NODELIST = "dgx1,dgx-h100-em2"
+
 
 
 
 MEM = "32GB"
-TIME ="0-1:00:00"
+TIME ="0-2:00:00"
 
 
 
@@ -31,13 +32,19 @@ def main():
     
     args = parser.parse_args()
 
+    get_model_name = lambda dataset, model_type, curriculum: os.path.join(dataset + ("_" + model_type) + "_" + curriculum.split(".")[0])
 
-    jobs = list(product(config.datasets, config.model_types, config.curricula))
-    print(len(jobs))
 
-    for dataset, model_type, curriculum in jobs:
-        model = os.path.join(dataset + ("_" + model_type) + "_" + curriculum.split(".")[0])
-        
+    jobs =[(get_model_name(dataset, model_type, curriculum), dataset, model_type, curriculum) for dataset, model_type, curriculum in product(config.datasets, config.model_types, config.baseline_curricula)]
+    jobs.extend([(get_model_name(dataset, model_type, model_type + curriculum), dataset, model_type, model_type + curriculum) for dataset, model_type, curriculum  in (product(config.datasets, config.model_types, config.influence_curricula))])
+    jobs.extend([(model_name, "external", model_type, "external") for model_name, model_type in config.baseline_models])
+
+    for model, dataset, model_type, curriculum in jobs:
+       
+        if not os.path.exists(os.path.join("./models", os.path.basename(model))) and dataset != "external":
+            print("skipping", model, "not ready")
+            continue
+
         script_header = \
 f"""
 #!/bin/bash 
@@ -46,10 +53,11 @@ f"""
 #SBATCH --container-mount-home 
 #SBATCH --mem={MEM} 
 #SBATCH --cpus-per-task=24  
-#SBATCH --gres=gpu:1
 #SBATCH --time={TIME}
+#SBATCH --nodes=1
 #SBATCH --container-workdir={os.getcwd()}
 #SBATCH --nodelist={NODELIST}
+
 export $(grep -v '^#' .env | xargs) && huggingface-cli login --token $HF_TOKEN
 python3 --version
 
@@ -60,9 +68,9 @@ python3 --version
 f"""
 
 python3 -m lm_eval --model hf{"-mlm" if model_type == "roberta" else ""} \
-    --model_args pretrained={model},backend='{"mlm" if model_type == "roberta" else "causal"}' \
+    --model_args pretrained={model},trust_remote_code=True,backend='{"mlm" if model_type == "roberta" else "causal"}' \
     --tasks blimp_filtered,blimp_supplement \
-    --device cuda:0 \
+    --device auto \
     --batch_size 1 \
     --log_samples \
     --output_path {blimp_out_path}
@@ -73,8 +81,10 @@ python3 -m lm_eval --model hf{"-mlm" if model_type == "roberta" else ""} \
 
         if not os.path.isfile(blimp_out_path):
             submit_script(script_header + blimp, args,  debug_id=None)
+        else:
+            print("skipping", model, "results exist")
 
-        return
+        
 
        
 if __name__ == "__main__":

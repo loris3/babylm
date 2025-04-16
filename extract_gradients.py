@@ -269,9 +269,11 @@ else:
 
 def get_data_collator(paradigm):
     if paradigm in ["mlm"]:
-        return DeterministicDataCollatorForLanguageModeling(
+        data_collator =  DeterministicDataCollatorForLanguageModeling(
             tokenizer=tokenizer, mlm=True, mlm_probability=0.15
         ) 
+        data_collator.set_epoch(0)
+        return data_collator
     if paradigm in ["pre"]:
         return DataCollatorForLanguageModeling(
             tokenizer=tokenizer, mlm=False

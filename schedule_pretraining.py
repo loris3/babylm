@@ -5,7 +5,7 @@ import shutil
 
 
 CONTAINER_IMAGE = "loris3/babylm:latest"
-NODELIST = "dgx-h100-em2"
+NODELIST = "galadriel,dgx-h100-em2"
 
 
 
@@ -47,7 +47,7 @@ def main():
         script = \
 f"""
 #!/bin/bash
-#SBATCH --job-name="[BabyLM] Pretraining (singleton)"
+#SBATCH --job-name="[BabyLM] Pretraining"
 #SBATCH --container-image={CONTAINER_IMAGE}
 #SBATCH --container-mount-home 
 #SBATCH --mem={MEM} 
@@ -57,7 +57,6 @@ f"""
 #SBATCH --container-workdir={os.getcwd()}
 #SBATCH --nodelist={NODELIST}
 #SBATCH --nodes=1
-#SBATCH --dependency=singleton
 
 python3 --version
 

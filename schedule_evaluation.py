@@ -15,7 +15,7 @@ from itertools import product
 from slurm_utils import submit_script
 
 CONTAINER_IMAGE = "loris3/babylm:eval"
-NODELIST = "dgx1,dgx-h100-em2"
+NODELIST = "dgx1,dgx-h100-em2,galadriel"
 
 
 

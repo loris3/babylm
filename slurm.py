@@ -5,8 +5,8 @@ import shutil
 
 
 CONTAINER_IMAGE = "loris3/babylm:latest"
-NODELIST_EXTRACT = "dgx1"
-NODELIST_PROCESS = "dgx1,dgx-h100-em2"
+NODELIST_EXTRACT = "dgx-h100-em2"
+NODELIST_PROCESS = "dgx-h100-em2"
 
 
 MEM_EXTRACT = "64GB"
@@ -96,6 +96,7 @@ f"""
 #SBATCH --nodelist={NODELIST_EXTRACT}
 #SBATCH --nice
 #SBATCH --nodes=1
+
 python3 --version
 
 df -h
@@ -145,7 +146,7 @@ python3 extract_gradients.py \
             #SBATCH --time={TIME_EXTRACT_TRAIN_PER_SUPERCHUNK}
             #SBATCH --container-workdir={os.getcwd()}
             #SBATCH --nodelist={NODELIST_EXTRACT}
-            #SBATCH --dependency=afterok:{":".join([str(i) for i in job_ids_test_sets])}
+            #SBATCH --dependency=afterok:51655{":".join([str(i) for i in job_ids_test_sets])}
             #SBATCH --nodes=1
 
             df -h

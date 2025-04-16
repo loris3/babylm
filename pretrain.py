@@ -43,6 +43,7 @@ parser = argparse.ArgumentParser("pretraining")
 parser.add_argument("dataset", help="A dataset on the hf hub. Format: username/name")
 parser.add_argument("curriculum", help="The curriculum to use. Filename in the dataset repo. Examples: curriculum.pt or random.pt")
 parser.add_argument("--model_type", help="One of 'roberta', 'llama'", default="roberta")
+parser.add_argument("--re_upload_to_hub", help="Re-upload local model to hub", action="store_true")
 args = parser.parse_args()
 
 
@@ -328,8 +329,10 @@ trainer = CurriculumTrainer(
     eval_dataset=dataset_eval,
     compute_metrics=compute_metrics,
     )
-trainer.train()  
-trainer.save_model(model_path)
+
+if not args.re_upload_to_hub:
+    trainer.train()  
+    trainer.save_model(model_path)
 
 
 ########

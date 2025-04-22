@@ -1,26 +1,20 @@
-FROM nvidia/cuda:12.5.1-cudnn-devel-ubuntu22.04
-
-# Install Python and required packages in one layer
+FROM nvidia/cuda:12.6.3-cudnn-devel-ubuntu22.04
 RUN apt-get update && apt-get install -y \
     python3.10 \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
-
-# Set up working directory
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-
-# Copy requirements and install dependencies in one step to reduce layers
 COPY requirements.txt .
 
-# Set up virtual environment and install dependencies
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir -r requirements.txt
-
+RUN  pip install --no-cache-dir --upgrade pip setuptools wheel
+RUN  pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
+RUN  pip install --no-cache-dir -r requirements.txt
 RUN pip install --no-cache-dir --no-build-isolation traker[fast]
+RUN python3 -m spacy download en_core_web_sm
 
-# Set environment variables for convenience
 
 
-# Copy rest of the app if needed (you might want to add this if you have app code)
-# COPY . .
+CMD ["python3"]
 
-CMD ["python"]
+
+

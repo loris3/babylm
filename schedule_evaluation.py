@@ -15,7 +15,7 @@ from itertools import product
 from slurm_utils import submit_script
 
 CONTAINER_IMAGE = "loris3/babylm:eval"
-NODELIST = "dgx1,dgx-h100-em2,galadriel"
+NODELIST = "dgx-h100-em2,galadriel"
 
 
 
@@ -53,6 +53,7 @@ f"""
 #SBATCH --container-mount-home 
 #SBATCH --mem={MEM} 
 #SBATCH --cpus-per-task=24  
+
 #SBATCH --time={TIME}
 #SBATCH --nodes=1
 #SBATCH --container-workdir={os.getcwd()}

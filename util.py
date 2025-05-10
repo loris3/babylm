@@ -185,9 +185,13 @@ def rename(x):
     # Top 50% Influential
     if "_influence_top_50_cp_shuffled" in x:
         return r"$C^{\{50\}}_{\nearrow}$"
-    # Decreasing (Shuffled Epochs)
+    # Increasing (Shuffled Epochs)
+    if "_incr_influence_epoch_repetition" in x:
+        return r"$C^E_{\nearrow}$"
     if "_influence_epoch_repetition" in x:
+    # Decreasing (Shuffled Epochs)
         return r"$C^E_{\searrow}$"
+
     # Alternating Positive and Negative
     if "_influence_tracin_sandwich" in x:
         return r"$C_{A}$"

@@ -53,9 +53,9 @@ f"""
 #SBATCH --container-mount-home 
 #SBATCH --mem={MEM} 
 #SBATCH --cpus-per-task=24  
-
 #SBATCH --time={TIME}
 #SBATCH --nodes=1
+#SBATCH --gres=gpu:0
 #SBATCH --container-workdir={os.getcwd()}
 #SBATCH --nodelist={NODELIST}
 

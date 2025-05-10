@@ -37,7 +37,7 @@ from trak.projectors import ProjectionType
 
 
 from transformers import DataCollatorForSeq2Seq
-from trl import apply_chat_template, is_conversational
+
 from olmo_training_utils import sft_tulu_tokenize_and_truncate_v1
 
 os.environ["TOKENIZERS_PARALLELISM"] = "True"
@@ -101,7 +101,7 @@ def get_loss_gradient(model, example,device):
     # free_mem, total_mem = torch.cuda.mem_get_info(device=device)
     # print(f"Free memory {device}:  {(free_mem/total_mem)} {free_mem / (1024 ** 2):.2f}/{total_mem / (1024 ** 2):.2f}",flush=True)
 
-
+    # print("dataset[i]",example)
     model.zero_grad()
 
     # we process one example at a time 
@@ -125,11 +125,11 @@ def get_loss_gradient(model, example,device):
             inputs_embeds=inputs_embeds,
             labels=example["labels"].to(device)
         )
-
-
     loss = outputs.loss 
     loss.retain_grad()
-    return torch.autograd.grad(loss, inputs_embeds, retain_graph=False)[0].squeeze()
+    r = torch.autograd.grad(loss, inputs_embeds, retain_graph=False)[0].squeeze()
+
+    return r
     
 
 def get_for_checkpoint(model, projector, checkpoint_path, out_dir, i_start, i_end):
@@ -178,6 +178,7 @@ def get_for_checkpoint(model, projector, checkpoint_path, out_dir, i_start, i_en
             return p
 
         if gradients is None:      
+            print("data",dataset[0])
             gradients = torch.stack([ 
                                         project(
                                             get_loss_gradient(
@@ -189,7 +190,7 @@ def get_for_checkpoint(model, projector, checkpoint_path, out_dir, i_start, i_en
                                         for i in tqdm(range(i_start, min(i_end, len(dataset)-1)), desc=f"{log_prefix} is getting gradients...")
                                     ])
         logging.debug(f"{log_prefix} ... got gradients")
-        if args.store and not os.path.isfile(out_path_store):
+        if args.store:
             torch.save( gradients, out_path_store)
             logging.info(f"{log_prefix} stored gradients to {out_path}")
         if "mean" == args.mode:
@@ -199,7 +200,7 @@ def get_for_checkpoint(model, projector, checkpoint_path, out_dir, i_start, i_en
             logging.info(f"{log_prefix} partial sum normalized")
             return torch.nn.functional.normalize(gradients, dim=1).sum(axis=0) # vanja: normalize before aggregating for cosine similarity
         else:
-            raise NotImplementedError
+            pass
         del gradients
         return
     except:
@@ -250,15 +251,25 @@ if "alpaca" in args.dataset:
 elif paradigm in ["pre", "mlm"]:
     dataset = load_dataset(args.dataset, split=args.dataset_split)
 
-    if "text" not in dataset.column_names:
-        dataset.set_transform(lambda x : tokenizer(apply_chat_template(x, tokenizer=tokenizer)["text"], return_special_tokens_mask=True, truncation=True, padding="max_length", max_length=4096 if "OLMo" in args.model else 512))
+    if "completion" in dataset.column_names: # hotfix for custom tulu dataset format used during olmo fine-tuning
+        def transform_example(x):
+            # re format...
+            chat_template = \
+                {"messages":  [
+                    {"role": "user", "content": x["prompt"][0] if x["prompt"][0] is not None else ""},
+                    {"role": "assistant", "content": x["completion"][0] if x["completion"][0] is not None else ""}
+                    ]
+                }
+            return sft_tulu_tokenize_and_truncate_v1(chat_template, tokenizer=tokenizer)  # ... so we can use Olmo sft code
+        dataset.set_transform(transform_example)
 
         logging.info(f"dataset format: chat format (pre)")
-    else:   
+    elif "text" in dataset.column_names:   
         dataset.set_transform(lambda x : tokenizer(x["text"], return_special_tokens_mask=True, truncation=True, padding="max_length", max_length=4096 if "OLMo" in args.model else 512))
 
         logging.info(f"dataset format: pre")
-  
+    else:
+        raise NotImplementedError
 elif paradigm == "sft":
     dataset = load_dataset(args.dataset, split=args.dataset_split)
     dataset.set_transform(lambda x : sft_tulu_tokenize_and_truncate_v1(x, tokenizer=tokenizer))
@@ -337,11 +348,12 @@ if __name__ == '__main__':
     
 
     
-    
+    print("len(dataset)",dataset)
     projector = None
     if args.random_projection:
         grad_dim = None
         logging.debug(f"inferring projection parameters ...")
+        
         grad_dim = get_loss_gradient(model, dataset[0], device).detach().flatten().unsqueeze(0).shape[-1]
         logging.debug(f"... using grad_dim={grad_dim} proj_dim={args.proj_dim} ...")
         projector = CudaProjector(grad_dim=grad_dim, proj_dim=args.proj_dim,seed=42, proj_type=ProjectionType.rademacher,device=device, max_batch_size=8)

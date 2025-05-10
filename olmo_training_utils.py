@@ -7,7 +7,7 @@ LABELS_KEY = "labels"
 def sft_tulu_tokenize_and_truncate_v1(row, tokenizer, max_seq_length=4096):
     """taken more or less directly from https://github.com/allenai/open-instruct/blob/main/open_instruct/finetune.py
        (who took it directly from https://github.com/allenai/open-instruct/blob/ba11286e5b9eb00d4ce5b40ef4cac1389888416a/open_instruct/finetune.py#L385)"""
-    messages = row["messages"][0]
+    messages = row["messages"]
 
     if len(messages) == 0:
         raise ValueError("messages field is empty.")

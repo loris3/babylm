@@ -11,6 +11,7 @@ baseline_curricula = [
 
 ]
 influence_curricula = [
+    "_incr_influence_epoch_repetition.pt",
    "_influence_epoch_repetition.pt",
    "_influence_incr_bins_dirac.pt",
    "_influence_decr_bins_dirac.pt",

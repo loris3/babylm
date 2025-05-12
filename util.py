@@ -198,7 +198,6 @@ def rename(x):
     
 
 
-
     if "random" in x:
         return r"$C_{rand}$"
     if "source_difficulty" in x:
@@ -207,11 +206,10 @@ def rename(x):
         return r"$C_{MATTR}$"
     if "perplexity_increasing" in x:
         return r"$C_{PPL}$"
-    if "random" in x:
-        return r"$C_{rand}$"
     else:
-        print(x)
-        return "TODO: " + x
+        s = "{"+os.path.basename(x).replace("babylm-baseline-10m-","").replace("gpt-bert-","").replace("-focus","")+"}"
+        return  f"$E_{s}$"
+
 
 def rename_dataset(x):
     if "2024" in x:
@@ -220,15 +218,12 @@ def rename_dataset(x):
         return "$D_{equitoken}$"
     if "stratified" in x:
         return "$D_{stratified}$"
-    return "external"
+    return "ext"
 
 def rename_model(x):
-    if "gpt-bert" in x:
-        return "gpt-bert"
-    if "baby-llama" in x:
-        return "baby-llama"
-    else:
-        return f"{rename(x)}"# {rename_dataset(x)}"
+    return f"{rename(x)}"
+   
+
 import os
 import matplotlib as plt
 def save_pdf(figure, name):
@@ -253,4 +248,4 @@ def get_curriculum_name(x):
     for curriculum in config.influence_curricula:
         if curriculum.replace(".pt","") in x:
             return curriculum
-    return "external"
+    return x

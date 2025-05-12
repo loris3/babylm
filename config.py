@@ -29,7 +29,9 @@ influence_curricula = [
 model_types = ["llama","roberta"]
 
 baseline_models = [
-   ("ltg/gpt-bert-babylm-small", "roberta"), # model_type just for the eval scripts to set eval mode mlm
-   ("JLTastet/baby-llama-2-345m-run2", "llama")
+   ("BabyLM-community/babylm-baseline-10m-gpt-bert-mixed", "roberta"), # model_type just for the eval scripts to set eval mode mlm
+   ("BabyLM-community/babylm-baseline-10m-gpt-bert-causal-focus", "roberta"),
+   ("BabyLM-community/babylm-baseline-10m-gpt-bert-masked-focus", "roberta"),
+   ("BabyLM-community/babylm-baseline-10m-gpt2", "llama")
 ]
 __all__ = ["datasets", "curricula","model_types"]

@@ -2,6 +2,7 @@ import os
 print(os.environ)
 from dotenv import load_dotenv
 load_dotenv()
+from transformers import TrainerCallback
 
 import os
 print(os.environ)
@@ -44,6 +45,8 @@ parser.add_argument("dataset", help="A dataset on the hf hub. Format: username/n
 parser.add_argument("curriculum", help="The curriculum to use. Filename in the dataset repo. Examples: curriculum.pt or random.pt")
 parser.add_argument("--model_type", help="One of 'roberta', 'llama'", default="roberta")
 parser.add_argument("--re_upload_to_hub", help="Re-upload local model to hub", action="store_true")
+parser.add_argument("--more_checkpoints", help="Save checkpoints requested by the BabyLM challange", action="store_true")
+
 args = parser.parse_args()
 
 
@@ -51,7 +54,10 @@ os.environ["WANDB_PROJECT"]="pretraining"
 
 datasets = load_dataset(args.dataset)
 
-model_path =  os.path.join("models/", args.dataset.split("/")[-1] + ("_" + args.model_type) + "_" +args.curriculum.split(".")[0])
+model_path =  os.path.join("models/", args.dataset.split("/")[-1] + ("_" + args.model_type) + "_" +args.curriculum.split(".")[0]) 
+
+if args.more_checkpoints:
+    model_path += "_babylm"
 if not os.path.exists(model_path):
     os.makedirs(model_path)
 
@@ -279,7 +285,7 @@ print("EPOCHS",EPOCHS)
 training_args = TrainingArguments(
     seed=42,
     output_dir=model_path,
-    save_strategy="epoch",
+    save_strategy="epoch" if not args.more_checkpoints else "no",
     overwrite_output_dir=True,
 
     num_train_epochs=EPOCHS, # do not change this manually: see the custom OrderedSampler  
@@ -321,14 +327,62 @@ if "roberta" == args.model_type:
     model = RobertaForMaskedLM(config=roberta_config)
 else:
     model = LlamaForCausalLM(llama_config)
-trainer = CurriculumTrainer(
-    model=model,
-    args=training_args,
-    data_collator=data_collator,
-    train_dataset=dataset,
-    eval_dataset=dataset_eval,
-    compute_metrics=compute_metrics,
-    )
+
+trainer = None
+
+if not args.more_checkpoints:    
+    trainer = CurriculumTrainer(
+        model=model,
+        args=training_args,
+        data_collator=data_collator,
+        train_dataset=dataset,
+        eval_dataset=dataset_eval,
+        compute_metrics=compute_metrics,
+        )
+else:
+    class StepCallback(TrainerCallback):
+        def __init__(self, save_steps):
+            self.save_steps = save_steps
+           
+
+        def on_step_end(self, args, state, control, **kwargs):
+            if state.global_step in self.save_steps:
+                print("will save at ", state.global_step,flush=True)
+                control.should_save = True
+            else:
+                print("step", state.global_step, flush=True)
+            return control
+
+
+    trainer = CurriculumTrainer(
+        model=model,
+        args=training_args,
+        data_collator=data_collator,
+        train_dataset=dataset,
+        eval_dataset=dataset_eval,
+        compute_metrics=compute_metrics,
+        callbacks=[StepCallback([50,
+                                81,
+                                195,
+                                269,
+                                296,
+                                323,
+                                352,
+                                388,
+                                439,
+                                962,
+                                1481,
+                                2009,
+                                2531,
+                                3050,
+                                3577,
+                                4102,
+                                4622,
+                                5142]
+ )],
+        )
+
+
 
 if not args.re_upload_to_hub:
     trainer.train()  
@@ -336,21 +390,22 @@ if not args.re_upload_to_hub:
 
 
 ########
-model_name = os.path.basename(model_path)
-model.push_to_hub(model_name, private=True)
-tokenizer.push_to_hub(model_name, private=True)
+if not args.more_checkpoints:
+    model_name = os.path.basename(model_path)
+    model.push_to_hub(model_name, private=True)
+    tokenizer.push_to_hub(model_name, private=True)
 
-from huggingface_hub import HfApi
-from huggingface_hub import upload_folder
-api = HfApi()
-from util import get_epoch_checkpoints
+    from huggingface_hub import HfApi
+    from huggingface_hub import upload_folder
+    api = HfApi()
+    from util import get_epoch_checkpoints
 
-for checkpoint_path in get_epoch_checkpoints(model_path):
+    for checkpoint_path in get_epoch_checkpoints(model_path):
 
-    upload_folder(
-        folder_path=checkpoint_path,
-        path_in_repo="checkpoints/" + os.path.basename(checkpoint_path),
-        repo_id=api.whoami()["name"] + "/" + model_name,
-        repo_type="model",
-        create_pr=False,
-    )
+        upload_folder(
+            folder_path=checkpoint_path,
+            path_in_repo="checkpoints/" + os.path.basename(checkpoint_path),
+            repo_id=api.whoami()["name"] + "/" + model_name,
+            repo_type="model",
+            create_pr=False,
+        )

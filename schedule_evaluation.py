@@ -14,14 +14,13 @@ from itertools import product
 
 from slurm_utils import submit_script
 
-CONTAINER_IMAGE = "loris3/babylm:eval"
-NODELIST = "dgx-h100-em2,galadriel"
+CONTAINER_IMAGE = "ghcr.io\#loris3/babylm:eval"
+NODELIST = "dgx-h100-em2,dgx1"
 
-HF_TOKEN = "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"
 
 
 MEM = "32GB"
-TIME ="0-6:59:00"
+TIME ="1-6:59:00"
 
 
 
@@ -38,11 +37,11 @@ def main():
     jobs.extend([(get_model_name(dataset, model_type, model_type + curriculum), dataset, model_type, model_type + curriculum) for dataset, model_type, curriculum  in (product(config.datasets, config.model_types, config.influence_curricula))])
     jobs.extend([(model_name, "external", model_type, "external") for model_name, model_type in config.baseline_models])
 
-    for model, dataset, model_type, curriculum in [("loris3/stratified_10m_curriculum_roberta_roberta_influence_incr_bins_lognorm_babylm", "loris3/stratified_10m_curriculum","roberta", "roberta_influence_incr_bins_lognorm.pt")]:#jobs:
+    for model, dataset, model_type, curriculum in [("babylm-anon/TICL", "babylm-anon/stratified_10m_curriculum","roberta", "roberta_influence_incr_bins_lognorm.pt")]:#jobs:
        
-        if not os.path.exists(os.path.join("./models", os.path.basename(model))) and dataset != "external":
-            print("skipping", model, "not ready")
-            continue
+        # if not os.path.exists(os.path.join("./models", os.path.basename(model))) and dataset != "external":
+        #     print("skipping", model, "not ready")
+        #     continue
 
         script_header = \
 f"""
@@ -59,7 +58,7 @@ f"""
 
 
 python3 --version
-export $(grep -v '^#' {os.path.join(os.getcwd(),".env")} | xargs) && huggingface-cli login --token $HF_TOKEN
+export $(grep -v '^#' {os.path.join(os.getcwd(),".env")} | xargs) && python3 -m huggingface-cli login --token $HF_TOKEN
 
 pwd
 mkdir {os.getcwd()}/results
@@ -75,20 +74,27 @@ python -m evaluation_pipeline.sentence_zero_shot.run --model_path_or_name {model
 python -m evaluation_pipeline.sentence_zero_shot.run --model_path_or_name {model} --backend {"mlm" if model_type == "roberta" else "causal"} --task blimp --data_path "evaluation_data/full_eval/supplement_filtered" --save_predictions --output_dir={os.path.join(os.getcwd(),"results")}
 python -m evaluation_pipeline.sentence_zero_shot.run --model_path_or_name {model} --backend {"mlm" if model_type == "roberta" else "causal"} --task ewok --data_path "evaluation_data/full_eval/ewok_filtered" --save_predictions --output_dir={os.path.join(os.getcwd(),"results")}
 python -m evaluation_pipeline.sentence_zero_shot.run --model_path_or_name {model} --backend {"mlm" if model_type == "roberta" else "causal"} --task entity_tracking --data_path "evaluation_data/full_eval/entity_tracking" --save_predictions --output_dir={os.path.join(os.getcwd(),"results")}
-python -m evaluation_pipeline.sentence_zero_shot.run --model_path_or_name {model} --backend {"mlm" if model_type == "roberta" else "causal"} --task wug --data_path "evaluation_data/full_eval/wug_adj_nominalization" --save_predictions --output_dir={os.path.join(os.getcwd(),"results")}
+python -m evaluation_pipeline.sentence_zero_shot.run --model_path_or_name {model} --backend {"mlm" if model_type == "roberta" else "causal"} --task wug_adj --data_path "evaluation_data/full_eval/wug_adj_nominalization" --save_predictions --output_dir={os.path.join(os.getcwd(),"results")}
+python -m evaluation_pipeline.sentence_zero_shot.run --model_path_or_name {model} --backend {"mlm" if model_type == "roberta" else "causal"} --task wug_past --data_path "evaluation_data/full_eval/wug_past_tense" --save_predictions --output_dir={os.path.join(os.getcwd(),"results")}
+python -m evaluation_pipeline.sentence_zero_shot.run --model_path_or_name {model} --backend {"mlm" if model_type == "roberta" else "causal"} --task comps --data_path "evaluation_data/full_eval/comps" --save_predictions --output_dir={os.path.join(os.getcwd(),"results")}
 python -m evaluation_pipeline.reading.run --model_path_or_name {model} --backend {"mlm" if model_type == "roberta" else "causal"} --data_path "evaluation_data/full_eval/reading/reading_data.csv" --output_dir={os.path.join(os.getcwd(),"results")}
 
+# this one has not revision_name param   
+    
+python -m evaluation_pipeline.AoA_word.run --model_name {model} --backend {"mlm" if model_type == "roberta" else "causal"} --track_name strict-small --word_path evaluation_data/full_eval/aoa/cdi_childes.json --output_dir={os.path.join(os.getcwd(),"results")}
 
 
 # fast for other checkpoints
 
-for revision_name in "chck_1M" "chck_2M" "chck_3M" "chck_4M" "chck_5M" "chck_6M" "chck_7M" "chck_8M" "chck_9M" "chck_10M" "chck_20M" "chck_30M" "chck_40M" "chck_50M" "chck_60M" "chck_70M" "chck_80M" "chck_90M"; do
+for revision_name in "chck_1M" "chck_2M" "chck_3M" "chck_4M" "chck_5M" "chck_6M" "chck_7M" "chck_8M" "chck_9M" "chck_10M" "chck_20M" "chck_30M" "chck_40M" "chck_50M" "chck_60M" "chck_70M" "chck_80M" "chck_90M" chck_100M"; do
     python -m evaluation_pipeline.sentence_zero_shot.run --model_path_or_name {model} --backend {"mlm" if model_type == "roberta" else "causal"} --task blimp --data_path "evaluation_data/fast_eval/blimp_fast" --save_predictions --revision_name "$revision_name" --output_dir={os.path.join(os.getcwd(),"results")}
     python -m evaluation_pipeline.sentence_zero_shot.run --model_path_or_name {model} --backend {"mlm" if model_type == "roberta" else "causal"} --task blimp --data_path "evaluation_data/fast_eval/supplement_fast" --save_predictions --revision_name "$revision_name" --output_dir={os.path.join(os.getcwd(),"results")}
     python -m evaluation_pipeline.sentence_zero_shot.run --model_path_or_name {model} --backend {"mlm" if model_type == "roberta" else "causal"} --task ewok --data_path "evaluation_data/fast_eval/ewok_fast" --save_predictions --revision_name "$revision_name" --output_dir={os.path.join(os.getcwd(),"results")}
-    python -m evaluation_pipeline.sentence_zero_shot.run --model_path_or_name {model} --backend {"mlm" if model_type == "roberta" else "causal"} --task wug --data_path "evaluation_data/fast_eval/wug_adj_nominalization" --save_predictions --revision_name "$revision_name" --output_dir={os.path.join(os.getcwd(),"results")}
+    python -m evaluation_pipeline.sentence_zero_shot.run --model_path_or_name {model} --backend {"mlm" if model_type == "roberta" else "causal"} --task wug_adj  --data_path "evaluation_data/fast_eval/wug_adj_nominalization" --save_predictions --revision_name "$revision_name" --output_dir={os.path.join(os.getcwd(),"results")}
+    python -m evaluation_pipeline.sentence_zero_shot.run --model_path_or_name {model} --backend {"mlm" if model_type == "roberta" else "causal"} --task wug_past  --data_path "evaluation_data/fast_eval/wug_past_tense" --save_predictions --revision_name "$revision_name" --output_dir={os.path.join(os.getcwd(),"results")}
     python -m evaluation_pipeline.sentence_zero_shot.run --model_path_or_name {model} --backend {"mlm" if model_type == "roberta" else "causal"} --task entity_tracking --data_path "evaluation_data/fast_eval/entity_tracking_fast" --save_predictions --revision_name "$revision_name" --output_dir={os.path.join(os.getcwd(),"results")}
     python -m evaluation_pipeline.reading.run --model_path_or_name {model} --backend {"mlm" if model_type == "roberta" else "causal"} --data_path "evaluation_data/fast_eval/reading/reading_data.csv" --revision_name "$revision_name" --output_dir={os.path.join(os.getcwd(),"results")}
+
 done
 
 
